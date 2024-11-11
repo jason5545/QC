@@ -110,7 +110,7 @@ def process_pdf_files_in_folder(folder, is_as_built):
     return ndt_codes_with_filenames_total, welding_codes_total
 
 def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built):
-    pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+).*?\s?已完成?.pdf')
+    pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+)\(.*?\)\s?\(已完成\)?.pdf')
     copied_files = 0
     not_found_filenames = set(codes_with_filenames.values())
 
