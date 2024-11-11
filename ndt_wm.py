@@ -192,12 +192,21 @@ def delete_all_ndt_pdfs(target_folder, is_as_built):
     return deleted_files
 
 def is_target_folder(folder_name):
-   pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#')
-   return pattern.match(folder_name) is not None
+    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#')
+    return pattern.match(folder_name) is not None
+
+def extract_base_folder_name(folder_name):
+    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#)')
+    match = pattern.search(folder_name)
+    if match:
+        return match.group(1)
+    else:
+        return folder_name
 
 def clean_unmatched_files(pdf_folder, is_as_built):
     deleted_files = []
     folder_name = os.path.basename(pdf_folder)
+    base_folder_name = extract_base_folder_name(folder_name)
 
     if is_as_built:
         target_folders = ["04 Welding Identification Summary", "03 Material Traceability & Mill Cert"]
@@ -210,7 +219,7 @@ def clean_unmatched_files(pdf_folder, is_as_built):
             for root, dirs, files in os.walk(subfolder_path):
                 for file in files:
                     if file.endswith('.pdf') and not file.startswith('~$'):
-                        if folder_name not in file:
+                        if base_folder_name not in file:
                             file_path = os.path.join(root, file)
                             os.remove(file_path)
                             deleted_files.append(file_path)
