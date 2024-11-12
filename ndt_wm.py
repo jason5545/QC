@@ -219,10 +219,15 @@ def clean_unmatched_files(pdf_folder, is_as_built):
             for root, dirs, files in os.walk(subfolder_path):
                 for file in files:
                     if file.endswith('.pdf') and not file.startswith('~$'):
-                        if base_folder_name not in file:
-                            file_path = os.path.join(root, file)
-                            os.remove(file_path)
-                            deleted_files.append(file_path)
+                        file_path = os.path.join(root, file)
+
+                        # 如果檔名中包含正確的資料夾名稱，則不刪除該 PDF
+                        if base_folder_name in file:
+                            continue
+
+                        # 否則，刪除該檔案
+                        os.remove(file_path)
+                        deleted_files.append(file_path)
                 break  # 只處理當前資料夾，不遞迴進入子資料夾
     return deleted_files
 
