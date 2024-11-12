@@ -221,8 +221,12 @@ def clean_unmatched_files(pdf_folder, is_as_built):
                     if file.endswith('.pdf') and not file.startswith('~$'):
                         file_path = os.path.join(root, file)
 
-                        # 如果檔名中包含正確的資料夾名稱，則不刪除該 PDF
-                        if base_folder_name in file:
+                        # 在檔名中移除 .001 以進行比對
+                        file_name_without_extension = os.path.splitext(file)[0]
+                        file_name_without_extension = re.sub(r'\.001$', '', file_name_without_extension)
+
+                        # 如果檔名中包含正確的資料夾名稱（忽略 .001），則不刪除該 PDF
+                        if base_folder_name in file_name_without_extension:
                             continue
 
                         # 否則，刪除該檔案
