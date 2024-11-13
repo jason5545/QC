@@ -109,6 +109,59 @@ def process_pdf_files_in_folder(folder, is_as_built):
 
     return ndt_codes_with_filenames_total, welding_codes_total
 
+
+def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built):
+    pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+)\(.*?\)\s?\(已完成\)?.pdf')
+    copied_files = 0
+    not_found_filenames = set(codes_with_filenames.values())
+
+    target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
+    os.makedirs(target_folder_path, exist_ok=True)
+
+    for root, dirs, files in os.walk(source_folder):
+        for file in files:
+            if file.endswith('.pdf') and not file.startswith('~$'):
+                source_file_path = os.path.join(root, file)
+                source_file_path = rename_file_if_needed(source_file_path)
+
+                match = pattern.match(file)
+                if match:
+                    ndt_code = match.group(1)
+                    if ndt_code in codes_with_filenames:
+                        not_found_filenames.discard(codes_with_filenames[ndt_code])
+                        shutil.copy2(source_file_path, os.path.join(target_folder_path, file))
+                        copied_files += 1
+
+    return copied_files, not_found_filenames
+
+def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_built):
+    copied_files = 0
+    not_found_codes = set(codes)
+    if is_as_built:
+        target_folder_path = os.path.join(target_folder, '05 Welding Consumable')
+    else:
+        target_folder_path = os.path.join(target_folder, '02 Material Traceability & Mill Cert', 'Welding Consumable')
+    os.makedirs(target_folder_path, exist_ok=True)
+
+    for code in codes:
+        found = False
+        pattern = re.compile(re.escape(code))
+        for root, dirs, files in os.walk(source_folder):
+            for file in files:
+                if file.endswith('.pdf') and not file.startswith('~$'):
+                    source_file_path = os.path.join(root, file)
+                    source_file_path = rename_file_if_needed(source_file_path)
+
+                    if pattern.search(file):
+                        not_found_codes.discard(code)
+                        target_file_path = os.path.join(target_folder_path, file)
+                        shutil.copy2(source_file_path, target_file_path)
+                        copied_files += 1
+                        found = True
+                        break
+            if found:
+                break
+    return copied_files, not_found_codes
 def delete_all_welding_pdfs(target_folder, is_as_built):
     deleted_files = 0
     if is_as_built:
