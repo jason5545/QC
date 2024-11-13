@@ -204,13 +204,24 @@ def extract_base_folder_name(folder_name):
         return folder_name
 
 def clean_unmatched_files(pdf_folder, is_as_built):
+    """
+    改進的檔案匹配邏輯，更準確地判斷檔案是否符合命名規則
+    """
     deleted_files = []
     folder_name = os.path.basename(pdf_folder)
     base_folder_name = extract_base_folder_name(folder_name)
-
-    # 建立忽略 .001 的正則表達式，用於比對檔案名稱
-    base_folder_pattern = re.sub(r'(\d+)', r'\1(\.001)?', re.escape(base_folder_name))
-
+    
+    # 修改正則表達式以更寬鬆地匹配檔案名稱
+    # 允許檔案名稱中包含資料夾名稱的任何部分
+    base_patterns = [
+        re.escape(base_folder_name),  # 完全匹配
+        r'CWP\d+[A-Z]-' + re.escape(base_folder_name),  # 允許前綴
+        re.escape(base_folder_name) + r'[\s_-]?\d*',  # 允許後綴數字
+    ]
+    
+    # 合併所有模式
+    combined_pattern = '|'.join(f'({pattern})' for pattern in base_patterns)
+    
     if is_as_built:
         target_folders = ["04 Welding Identification Summary", "03 Material Traceability & Mill Cert"]
     else:
@@ -223,18 +234,27 @@ def clean_unmatched_files(pdf_folder, is_as_built):
                 for file in files:
                     if file.endswith('.pdf') and not file.startswith('~$'):
                         file_path = os.path.join(root, file)
-
-                        # 去除檔案副檔名，得到檔名部分
+                        
+                        # 檢查檔案名稱是否符合任一模式
                         file_name_without_extension = os.path.splitext(file)[0]
-
-                        # 使用正則表達式比對檔案名稱是否包含資料夾名稱（忽略 .001）
-                        if re.search(base_folder_pattern, file_name_without_extension):
-                            continue
-
-                        # 否則，刪除該檔案
-                        os.remove(file_path)
-                        deleted_files.append(file_path)
+                        
+                        # 新增：在刪除之前輸出除錯資訊
+                        print(f"檢查檔案: {file_name_without_extension}")
+                        print(f"比對模式: {combined_pattern}")
+                        
+                        if not re.search(combined_pattern, file_name_without_extension, re.IGNORECASE):
+                            # 在刪除之前新增確認對話框
+                            if messagebox.askyesno("確認刪除", 
+                                                 f"是否要刪除檔案：{file}\n" +
+                                                 f"資料夾名稱：{base_folder_name}\n" +
+                                                 "此檔案似乎不符合命名規則。"):
+                                os.remove(file_path)
+                                deleted_files.append(file_path)
+                                print(f"已刪除檔案: {file_path}")
+                            else:
+                                print(f"使用者選擇保留檔案: {file_path}")
                 break  # 只處理當前資料夾，不遞迴進入子資料夾
+                
     return deleted_files
 
 # 其餘函式保持不變，例如 `process_single_folder` 和 `process_folders` 等。
