@@ -113,7 +113,7 @@ def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames,
     pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+)\(.*?\)\s?\(已完成\)?.pdf')
     copied_files = 0
     not_found_filenames = set(codes_with_filenames.values())
-
+    
     target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
     os.makedirs(target_folder_path, exist_ok=True)
 
@@ -192,51 +192,8 @@ def delete_all_ndt_pdfs(target_folder, is_as_built):
     return deleted_files
 
 def is_target_folder(folder_name):
-    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#')
-    return pattern.match(folder_name) is not None
-
-def extract_base_folder_name(folder_name):
-    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#)')
-    match = pattern.search(folder_name)
-    if match:
-        return match.group(1)
-    else:
-        return folder_name
-
-def clean_unmatched_files(pdf_folder, is_as_built):
-    deleted_files = []
-    folder_name = os.path.basename(pdf_folder)
-    base_folder_name = extract_base_folder_name(folder_name)
-
-    # 將資料夾名稱轉換成忽略 .001 的正則表達式
-    # 比如 6S201#021 -> 6S201(\.001)?#021
-    base_folder_pattern = re.sub(r'(\d+)', r'\1(\.001)?', re.escape(base_folder_name))
-
-    if is_as_built:
-        target_folders = ["04 Welding Identification Summary", "03 Material Traceability & Mill Cert"]
-    else:
-        target_folders = ["01 Welding Identification Summary", "02 Material Traceability & Mill Cert"]
-
-    for subfolder in target_folders:
-        subfolder_path = os.path.join(pdf_folder, subfolder)
-        if os.path.exists(subfolder_path):
-            for root, dirs, files in os.walk(subfolder_path):
-                for file in files:
-                    if file.endswith('.pdf') and not file.startswith('~$'):
-                        file_path = os.path.join(root, file)
-
-                        # 去除檔案副檔名，得到檔名部分
-                        file_name_without_extension = os.path.splitext(file)[0]
-
-                        # 使用正則表達式比對檔案名稱是否包含資料夾名稱（忽略 .001）
-                        if re.search(base_folder_pattern, file_name_without_extension):
-                            continue
-
-                        # 否則，刪除該檔案
-                        os.remove(file_path)
-                        deleted_files.append(file_path)
-                break  # 只處理當前資料夾，不遞迴進入子資料夾
-    return deleted_files
+   pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#')
+   return pattern.match(folder_name) is not None
 
 def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built):
     # 先處理 NDT 報驗單
@@ -272,10 +229,7 @@ def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_
     if welding_copied == 0 and welding_codes_total:
         reasons.append("找到了焊材材證編號，但沒有找到對應的焊材材證 PDF 檔案。")
 
-    # 清理不符合的檔案
-    deleted_files = clean_unmatched_files(pdf_folder, is_as_built)
-
-    return ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files
+    return ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons
 
 def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder):
     total_ndt_copied = 0
@@ -283,7 +237,6 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
     not_found_ndt_filenames_total = set()
     not_found_welding_codes_total = set()
     reasons_total = []
-    deleted_files_total = []
 
     is_as_built = "As-Built" in pdf_folder
 
@@ -295,30 +248,28 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
         messagebox.showinfo("檔案重命名", message)
 
     if is_target_folder(os.path.basename(pdf_folder)):
-        ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
+        ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons = process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
 
         total_ndt_copied += ndt_copied
         total_welding_copied += welding_copied
         not_found_ndt_filenames_total.update(not_found_ndt_filenames)
         not_found_welding_codes_total.update(not_found_welding_codes)
         reasons_total.extend(reasons)
-        deleted_files_total.extend(deleted_files)
     else:
         for root, dirs, files in os.walk(pdf_folder):
             for dir in dirs:
                 if is_target_folder(dir):
                     subfolder_path = os.path.join(root, dir)
-                    ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = process_single_folder(subfolder_path, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
+                    ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons = process_single_folder(subfolder_path, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
 
                     total_ndt_copied += ndt_copied
                     total_welding_copied += welding_copied
                     not_found_ndt_filenames_total.update(not_found_ndt_filenames)
                     not_found_welding_codes_total.update(not_found_welding_codes)
                     reasons_total.extend(reasons)
-                    deleted_files_total.extend(deleted_files)
             break  # 只處理第一層子資料夾
 
-    return total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total, deleted_files_total
+    return total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total
 
 def main():
     root = tk.Tk()
@@ -351,7 +302,7 @@ def main():
     is_as_built = "As-Built" in pdf_folder
     mode = "竣工模式" if is_as_built else "一般模式"
 
-    total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total, deleted_files_total = process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder)
+    total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total = process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder)
 
     message = f"執行模式: {mode}\n\n"
     message += f"報驗單: 共複製了 {total_ndt_copied} 份。\n"
@@ -369,11 +320,6 @@ def main():
     if total_ndt_copied == 0 and total_welding_copied == 0 and reasons_total:
         message += "\n\n沒有檔案被複製，具體原因如下：\n"
         message += "\n".join(reasons_total)
-
-    if deleted_files_total:
-        message += "\n\n以下檔案因為檔名不符合已被刪除：\n"
-        for file_path in deleted_files_total:
-            message += f"{file_path}\n"
 
     messagebox.showinfo("完成", message)
 
