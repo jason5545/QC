@@ -18,6 +18,7 @@ def rename_file_if_needed(file_path):
     return file_path
 
 def check_and_rename_files_in_folder(folder_path):
+    """遍歷資料夾中的所有檔案，並進行必要的重新命名"""
     renamed_files = []
     for root, dirs, files in os.walk(folder_path):
         for file in files:
@@ -74,6 +75,22 @@ def get_welding_codes_from_pdf(file_path):
         print(f"無法讀取 PDF 檔案 {file_path}: {e}")
 
     return codes
+
+def is_target_folder(folder_name):
+    """判斷是否為目標資料夾，並支援如 '6S201#021' 的格式"""
+    # 修改正則表達式以捕捉更多數字位數
+    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[1256]#\d+')
+    return pattern.match(folder_name) is not None
+
+def extract_base_folder_name(folder_name):
+    """從資料夾名稱中提取基本名稱，支援如 '6S201#021' 的格式"""
+    # 修改正則表達式以捕捉更多數字位數
+    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[1256]#\d+)', re.IGNORECASE)
+    match = pattern.search(folder_name)
+    if match:
+        return match.group(1)
+    else:
+        return folder_name
 
 def process_pdf_files_in_folder(folder, is_as_built):
     """處理指定資料夾中的 PDF 檔案，提取 NDT 和焊材材證編號"""
@@ -200,7 +217,7 @@ def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_buil
                                 print(f"已複製焊材材證檔案: {source_file_path} -> {target_file_path}")
                             except Exception as e:
                                 print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
-                            break  # 一個檔案只會對應到一個 code
+                        break  # 一個檔案只會對應到一個 code
 
     return copied_files, not_found_codes
 
@@ -242,20 +259,6 @@ def delete_all_ndt_pdfs(target_folder, is_as_built):
                     print(f"無法刪除檔案 {file_path}: {e}")
 
     return deleted_files
-
-def is_target_folder(folder_name):
-    """判斷是否為目標資料夾"""
-    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#')
-    return pattern.match(folder_name) is not None
-
-def extract_base_folder_name(folder_name):
-    """從資料夾名稱中提取基本名稱"""
-    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#)')
-    match = pattern.search(folder_name)
-    if match:
-        return match.group(1)
-    else:
-        return folder_name
 
 def clean_unmatched_files(pdf_folder, is_as_built):
     """
