@@ -193,11 +193,14 @@ def delete_all_ndt_pdfs(target_folder, is_as_built):
 
 def extract_base_folder_name(folder_name):
     """
-    提取資料夾名稱，統一處理 XB 系列和 6S 系列的命名格式
+    提取資料夾名稱，統一處理 XB 系列和 6S 系列的命名格式，包含錯誤處理
     例如：
     - XB4C.001#001
     - 6S201.001#021
     """
+    if not folder_name:  # 加入空值檢查
+        return ""
+        
     # 統一格式模式
     patterns = [
         r'(XB[1-4][ABC](?:\.\d{3})?#\d+)',  # XB 系列，流水號可選
@@ -205,117 +208,95 @@ def extract_base_folder_name(folder_name):
     ]
     
     combined_pattern = '|'.join(patterns)
-    match = re.search(combined_pattern, folder_name)
+    match = re.search(combined_pattern, str(folder_name))
     if match:
         return match.group(1)
-    return folder_name
+    return str(folder_name)  # 確保返回字串
 
 def is_target_folder(folder_name):
     """
     檢查是否為目標資料夾
     """
+    if not folder_name:  # 加入空值檢查
+        return False
+        
     patterns = [
         r'XB[1-4][ABC](?:\.\d{3})?#\d+',
         r'6S(?:20[1-6]|21[1-7])(?:\.\d{3})?#?\d*'
     ]
     
     combined_pattern = '|'.join(patterns)
-    return re.match(combined_pattern, folder_name) is not None
+    return bool(re.match(combined_pattern, str(folder_name)))
 
 def clean_unmatched_files(pdf_folder, is_as_built):
     """
-    改進的檔案匹配邏輯，統一處理流水號
+    改進的檔案匹配邏輯，加入錯誤處理
     """
     deleted_files = []
-    folder_name = os.path.basename(pdf_folder)
-    base_folder_name = extract_base_folder_name(folder_name)
     
-    # 建立檔案名稱匹配模式
-    base_patterns = [
-        re.escape(base_folder_name),  # 完全匹配
-        r'CWP\d+[A-Z]-' + re.escape(base_folder_name),  # 允許 CWP 前綴
-        # 統一的匹配模式，處理基本名稱和可選的流水號
-        r'.*?' + re.escape(base_folder_name.split('.')[0]) + r'(?:\.\d{3})?(?:#\d+)?' + r'.*'
-    ]
-    
-    combined_pattern = '|'.join(f'({pattern})' for pattern in base_patterns)
-    
-    if is_as_built:
-        target_folders = ["04 Welding Identification Summary", "03 Material Traceability & Mill Cert"]
-    else:
-        target_folders = ["01 Welding Identification Summary", "02 Material Traceability & Mill Cert"]
+    try:
+        folder_name = os.path.basename(pdf_folder)
+        base_folder_name = extract_base_folder_name(folder_name)
+        
+        if not base_folder_name:  # 檢查是否為空字串
+            print(f"警告：無法從資料夾名稱中提取基本名稱: {folder_name}")
+            return deleted_files
+        
+        # 建立檔案名稱匹配模式
+        base_patterns = [
+            re.escape(base_folder_name),  # 完全匹配
+            r'CWP\d+[A-Z]-' + re.escape(base_folder_name),  # 允許 CWP 前綴
+            # 統一的匹配模式，處理基本名稱和可選的流水號
+            r'.*?' + re.escape(base_folder_name.split('.')[0]) + r'(?:\.\d{3})?(?:#\d+)?' + r'.*'
+        ]
+        
+        combined_pattern = '|'.join(f'({pattern})' for pattern in base_patterns)
+        
+        if is_as_built:
+            target_folders = ["04 Welding Identification Summary", "03 Material Traceability & Mill Cert"]
+        else:
+            target_folders = ["01 Welding Identification Summary", "02 Material Traceability & Mill Cert"]
 
-    print(f"資料夾基本名稱: {base_folder_name}")
-    print(f"使用的匹配模式: {combined_pattern}")
+        print(f"資料夾基本名稱: {base_folder_name}")
+        print(f"使用的匹配模式: {combined_pattern}")
 
-    for subfolder in target_folders:
-        subfolder_path = os.path.join(pdf_folder, subfolder)
-        if os.path.exists(subfolder_path):
-            for root, dirs, files in os.walk(subfolder_path):
-                for file in files:
-                    if file.endswith('.pdf') and not file.startswith('~$'):
-                        file_path = os.path.join(root, file)
-                        file_name_without_extension = os.path.splitext(file)[0]
-                        
-                        print(f"檢查檔案: {file_name_without_extension}")
-                        
-                        # 檢查檔案名稱是否符合模式
-                        if not re.search(combined_pattern, file_name_without_extension, re.IGNORECASE):
-                            if messagebox.askyesno("確認刪除", 
-                                                 f"是否要刪除檔案：{file}\n" +
-                                                 f"資料夾名稱：{base_folder_name}\n" +
-                                                 "此檔案似乎不符合命名規則。"):
-                                os.remove(file_path)
-                                deleted_files.append(file_path)
-                                print(f"已刪除檔案: {file_path}")
-                            else:
-                                print(f"使用者選擇保留檔案: {file_path}")
-                break
+        for subfolder in target_folders:
+            subfolder_path = os.path.join(pdf_folder, subfolder)
+            if os.path.exists(subfolder_path):
+                for root, dirs, files in os.walk(subfolder_path):
+                    for file in files:
+                        if file.endswith('.pdf') and not file.startswith('~$'):
+                            file_path = os.path.join(root, file)
+                            file_name_without_extension = os.path.splitext(file)[0]
+                            
+                            print(f"檢查檔案: {file_name_without_extension}")
+                            
+                            try:
+                                # 檢查檔案名稱是否符合模式
+                                if not re.search(combined_pattern, file_name_without_extension, re.IGNORECASE):
+                                    if messagebox.askyesno("確認刪除", 
+                                                         f"是否要刪除檔案：{file}\n" +
+                                                         f"資料夾名稱：{base_folder_name}\n" +
+                                                         "此檔案似乎不符合命名規則。"):
+                                        os.remove(file_path)
+                                        deleted_files.append(file_path)
+                                        print(f"已刪除檔案: {file_path}")
+                                    else:
+                                        print(f"使用者選擇保留檔案: {file_path}")
+                            except Exception as e:
+                                print(f"處理檔案時發生錯誤 {file_path}: {str(e)}")
+                    break
+                    
+    except Exception as e:
+        print(f"處理資料夾時發生錯誤 {pdf_folder}: {str(e)}")
+        messagebox.showerror("錯誤", f"處理資料夾時發生錯誤：\n{str(e)}")
     
     return deleted_files
-# 其餘函式保持不變，例如 `process_single_folder` 和 `process_folders` 等。
-# ...
-
-def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built):
-    # 先處理 NDT 報驗單
-    ndt_codes_with_filenames_total, welding_codes_total = process_pdf_files_in_folder(pdf_folder, is_as_built)
-
-    reasons = []
-
-    # 檢查是否找到 NDT 編號
-    if not ndt_codes_with_filenames_total:
-        reasons.append("沒有在 PDF 中找到任何符合條件的 NDT 編號。")
-
-    # 檢查是否找到焊材材證編號
-    if not welding_codes_total:
-        reasons.append("沒有在 PDF 中找到任何符合條件的焊材材證編號。")
-
-    # 刪除所有現有的 NDT 報驗單檔案
-    delete_all_ndt_pdfs(pdf_folder, is_as_built)
-
-    # 在複製焊材材證之前，先刪除所有現有的焊材材證檔案
-    delete_all_welding_pdfs(pdf_folder, is_as_built)
-
-    # 開始複製 NDT 報驗單
-    ndt_copied, not_found_ndt_filenames = search_and_copy_ndt_pdfs(ndt_source_pdf_folder, pdf_folder,
-                                                                   ndt_codes_with_filenames_total, is_as_built)
-
-    if ndt_copied == 0 and ndt_codes_with_filenames_total:
-        reasons.append("找到了 NDT 編號，但沒有找到對應的報驗單 PDF 檔案。")
-
-    # 開始複製焊材材證
-    welding_copied, not_found_welding_codes = search_and_copy_welding_pdfs(welding_source_pdf_folder, pdf_folder,
-                                                                           welding_codes_total, is_as_built)
-
-    if welding_copied == 0 and welding_codes_total:
-        reasons.append("找到了焊材材證編號，但沒有找到對應的焊材材證 PDF 檔案。")
-
-    # 清理不符合的檔案
-    deleted_files = clean_unmatched_files(pdf_folder, is_as_built)
-
-    return ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files
 
 def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder):
+    """
+    處理多個資料夾，加入錯誤處理
+    """
     total_ndt_copied = 0
     total_welding_copied = 0
     not_found_ndt_filenames_total = set()
@@ -323,41 +304,51 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
     reasons_total = []
     deleted_files_total = []
 
-    is_as_built = "As-Built" in pdf_folder
+    try:
+        is_as_built = "As-Built" in pdf_folder
 
-    renamed_files = check_and_rename_files_in_folder(pdf_folder)
-    if renamed_files:
-        message = "以下檔案已被重新命名：\n"
-        for old_path, new_path in renamed_files:
-            message += f"舊名稱：{os.path.basename(old_path)} -> 新名稱：{os.path.basename(new_path)}\n"
-        messagebox.showinfo("檔案重命名", message)
+        renamed_files = check_and_rename_files_in_folder(pdf_folder)
+        if renamed_files:
+            message = "以下檔案已被重新命名：\n"
+            for old_path, new_path in renamed_files:
+                message += f"舊名稱：{os.path.basename(old_path)} -> 新名稱：{os.path.basename(new_path)}\n"
+            messagebox.showinfo("檔案重命名", message)
 
-    if is_target_folder(os.path.basename(pdf_folder)):
-        ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
+        if is_target_folder(os.path.basename(pdf_folder)):
+            results = process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
+            ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = results
 
-        total_ndt_copied += ndt_copied
-        total_welding_copied += welding_copied
-        not_found_ndt_filenames_total.update(not_found_ndt_filenames)
-        not_found_welding_codes_total.update(not_found_welding_codes)
-        reasons_total.extend(reasons)
-        deleted_files_total.extend(deleted_files)
-    else:
-        for root, dirs, files in os.walk(pdf_folder):
-            for dir in dirs:
-                if is_target_folder(dir):
-                    subfolder_path = os.path.join(root, dir)
-                    ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = process_single_folder(subfolder_path, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
+            total_ndt_copied += ndt_copied
+            total_welding_copied += welding_copied
+            not_found_ndt_filenames_total.update(not_found_ndt_filenames)
+            not_found_welding_codes_total.update(not_found_welding_codes)
+            reasons_total.extend(reasons)
+            deleted_files_total.extend(deleted_files)
+        else:
+            for root, dirs, files in os.walk(pdf_folder):
+                for dir in dirs:
+                    if is_target_folder(dir):
+                        subfolder_path = os.path.join(root, dir)
+                        try:
+                            results = process_single_folder(subfolder_path, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built)
+                            ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = results
 
-                    total_ndt_copied += ndt_copied
-                    total_welding_copied += welding_copied
-                    not_found_ndt_filenames_total.update(not_found_ndt_filenames)
-                    not_found_welding_codes_total.update(not_found_welding_codes)
-                    reasons_total.extend(reasons)
-                    deleted_files_total.extend(deleted_files)
-            break  # 只處理第一層子資料夾
+                            total_ndt_copied += ndt_copied
+                            total_welding_copied += welding_copied
+                            not_found_ndt_filenames_total.update(not_found_ndt_filenames)
+                            not_found_welding_codes_total.update(not_found_welding_codes)
+                            reasons_total.extend(reasons)
+                            deleted_files_total.extend(deleted_files)
+                        except Exception as e:
+                            print(f"處理資料夾時發生錯誤 {subfolder_path}: {str(e)}")
+                break  # 只處理第一層子資料夾
 
-    return total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total, deleted_files_total
+    except Exception as e:
+        print(f"處理資料夾時發生錯誤: {str(e)}")
+        messagebox.showerror("錯誤", f"處理資料夾時發生錯誤：\n{str(e)}")
 
+    return (total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, 
+            not_found_welding_codes_total, reasons_total, deleted_files_total)
 def main():
     root = tk.Tk()
     root.withdraw()
