@@ -8,27 +8,37 @@ from difflib import get_close_matches
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
-from functools import partial
 import threading
 
-CACHE_FILE = 'folder_cache.json'
+# 常數設定
+CACHE_DIR = 'cache'
+NDT_CACHE_FILE = os.path.join(CACHE_DIR, 'ndt_cache.json')
+WELDING_CACHE_FILE = os.path.join(CACHE_DIR, 'welding_cache.json')
 CACHE_EXPIRY = 24 * 3600  # 快取有效期為 24 小時
 
-def load_cache():
-    """載入快取資料夾結構"""
-    if os.path.exists(CACHE_FILE):
-        cache_mtime = os.path.getmtime(CACHE_FILE)
-        if time.time() - cache_mtime < CACHE_EXPIRY:
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        else:
-            print("快取已過期，重新建立快取。")
-    return {}
+# 確保快取目錄存在
+os.makedirs(CACHE_DIR, exist_ok=True)
 
-def save_cache(cache):
+# 快取鎖
+cache_lock = threading.Lock()
+
+def load_cache(cache_file):
+    """載入快取資料夾結構"""
+    with cache_lock:
+        if os.path.exists(cache_file):
+            cache_mtime = os.path.getmtime(cache_file)
+            if time.time() - cache_mtime < CACHE_EXPIRY:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            else:
+                print(f"快取 {cache_file} 已過期，重新建立快取。")
+        return {}
+
+def save_cache(cache, cache_file):
     """儲存快取資料夾結構"""
-    with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, ensure_ascii=False, indent=4)
+    with cache_lock:
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=4)
 
 def build_folder_cache(folder_path):
     """建立資料夾結構快取"""
@@ -219,7 +229,7 @@ def process_pdf_files_in_folder(folder, is_as_built, cache, max_workers):
 
     # 更新快取
     if update_folder_cache(folder, cache):
-        save_cache(cache)
+        save_cache(cache, get_cache_file(is_as_built))
         print("快取已更新。")
 
     # 取得目標資料夾
@@ -275,7 +285,7 @@ def process_pdf_files_in_folder(folder, is_as_built, cache, max_workers):
                 messagebox.showwarning("警告", f"未找到 '{target_folder_name}' 資料夾，程序將終止執行。")
                 raise SystemExit
 
-    # 處理所有 summary 資料夾中的 PDF 檔案
+    # 收集所有 summary 資料夾中的 PDF 路徑
     summary_paths = []
     for summary_folder in summary_folders:
         for file in os.listdir(summary_folder):
@@ -288,10 +298,10 @@ def process_pdf_files_in_folder(folder, is_as_built, cache, max_workers):
                     cache[relative_root]['files'][file] = os.path.getmtime(summary_path)
                     cache[relative_root]['files'][os.path.basename(summary_path)] = os.path.getmtime(summary_path)
                     del cache[relative_root]['files'][file]
-                    save_cache(cache)
+                    save_cache(cache, get_cache_file(is_as_built))
                 summary_paths.append(summary_path)
 
-    # 使用多進程處理 PDF 解析
+    # 使用多進程處理 PDF 解析（CPU 密集型）
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_pdf_file, summary_path) for summary_path in summary_paths]
         for future in as_completed(futures):
@@ -300,6 +310,13 @@ def process_pdf_files_in_folder(folder, is_as_built, cache, max_workers):
             welding_codes_total.update(welding_codes)
 
     return ndt_codes_with_filenames_total, welding_codes_total
+
+def get_cache_file(is_as_built):
+    """根據模式返回相應的快取檔案路徑"""
+    if is_as_built:
+        return WELDING_CACHE_FILE  # 假設快取與模式相關，可根據需求調整
+    else:
+        return NDT_CACHE_FILE
 
 def find_ndt_file(file_path, pattern, codes_with_filenames):
     """檢查檔案是否符合 NDT 編號並返回相關資訊"""
@@ -602,7 +619,10 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
     is_as_built = "As-Built" in pdf_folder
 
     # 載入快取
-    cache = load_cache()
+    if is_as_built:
+        cache = load_cache(WELDING_CACHE_FILE)
+    else:
+        cache = load_cache(NDT_CACHE_FILE)
 
     # 設置最大工作線程數
     cpu_count = os.cpu_count() or 12  # 預設為 12，符合 i5-12500 的超線程
@@ -616,7 +636,10 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
             message += f"舊名稱：{os.path.basename(old_path)} -> 新名稱：{os.path.basename(new_path)}\n"
         messagebox.showinfo("檔案重命名", message)
         # 更新快取
-        save_cache(cache)
+        if is_as_built:
+            save_cache(cache, WELDING_CACHE_FILE)
+        else:
+            save_cache(cache, NDT_CACHE_FILE)
 
     if is_target_folder(os.path.basename(pdf_folder)):
         # 如果根目錄就是目標資料夾
@@ -649,7 +672,10 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
             break  # 只處理第一層子資料夾
 
     # 儲存快取
-    save_cache(cache)
+    if is_as_built:
+        save_cache(cache, WELDING_CACHE_FILE)
+    else:
+        save_cache(cache, NDT_CACHE_FILE)
 
     return total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total, deleted_files_total
 
