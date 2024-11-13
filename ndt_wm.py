@@ -109,59 +109,6 @@ def process_pdf_files_in_folder(folder, is_as_built):
 
     return ndt_codes_with_filenames_total, welding_codes_total
 
-def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built):
-    pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+)\(.*?\)\s?\(已完成\)?.pdf')
-    copied_files = 0
-    not_found_filenames = set(codes_with_filenames.values())
-
-    target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
-    os.makedirs(target_folder_path, exist_ok=True)
-
-    for root, dirs, files in os.walk(source_folder):
-        for file in files:
-            if file.endswith('.pdf') and not file.startswith('~$'):
-                source_file_path = os.path.join(root, file)
-                source_file_path = rename_file_if_needed(source_file_path)
-
-                match = pattern.match(file)
-                if match:
-                    ndt_code = match.group(1)
-                    if ndt_code in codes_with_filenames:
-                        not_found_filenames.discard(codes_with_filenames[ndt_code])
-                        shutil.copy2(source_file_path, os.path.join(target_folder_path, file))
-                        copied_files += 1
-
-    return copied_files, not_found_filenames
-
-def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_built):
-    copied_files = 0
-    not_found_codes = set(codes)
-    if is_as_built:
-        target_folder_path = os.path.join(target_folder, '05 Welding Consumable')
-    else:
-        target_folder_path = os.path.join(target_folder, '02 Material Traceability & Mill Cert', 'Welding Consumable')
-    os.makedirs(target_folder_path, exist_ok=True)
-
-    for code in codes:
-        found = False
-        pattern = re.compile(re.escape(code))
-        for root, dirs, files in os.walk(source_folder):
-            for file in files:
-                if file.endswith('.pdf') and not file.startswith('~$'):
-                    source_file_path = os.path.join(root, file)
-                    source_file_path = rename_file_if_needed(source_file_path)
-
-                    if pattern.search(file):
-                        not_found_codes.discard(code)
-                        target_file_path = os.path.join(target_folder_path, file)
-                        shutil.copy2(source_file_path, target_file_path)
-                        copied_files += 1
-                        found = True
-                        break
-            if found:
-                break
-    return copied_files, not_found_codes
-
 def delete_all_welding_pdfs(target_folder, is_as_built):
     deleted_files = 0
     if is_as_built:
@@ -208,8 +155,7 @@ def clean_unmatched_files(pdf_folder, is_as_built):
     folder_name = os.path.basename(pdf_folder)
     base_folder_name = extract_base_folder_name(folder_name)
 
-    # 將資料夾名稱轉換成忽略 .001 的正則表達式
-    # 比如 6S201#021 -> 6S201(\.001)?#021
+    # 建立忽略 .001 的正則表達式，用於比對檔案名稱
     base_folder_pattern = re.sub(r'(\d+)', r'\1(\.001)?', re.escape(base_folder_name))
 
     if is_as_built:
@@ -237,6 +183,9 @@ def clean_unmatched_files(pdf_folder, is_as_built):
                         deleted_files.append(file_path)
                 break  # 只處理當前資料夾，不遞迴進入子資料夾
     return deleted_files
+
+# 其餘函式保持不變，例如 `process_single_folder` 和 `process_folders` 等。
+# ...
 
 def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built):
     # 先處理 NDT 報驗單
