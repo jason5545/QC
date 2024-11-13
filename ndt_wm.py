@@ -79,7 +79,7 @@ def get_welding_codes_from_pdf(file_path):
 def is_target_folder(folder_name):
     """判斷是否為目標資料夾，並支援如 '6S201#021' 的格式"""
     # 修改正則表達式以捕捉更多數字位數
-    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[1256]#\d+')
+    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[1256]#\d+', re.IGNORECASE)
     return pattern.match(folder_name) is not None
 
 def extract_base_folder_name(folder_name):
@@ -156,14 +156,15 @@ def process_pdf_files_in_folder(folder, is_as_built):
     return ndt_codes_with_filenames_total, welding_codes_total
 
 def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built):
-    """搜尋並複製 NDT PDF 檔案"""
+    """搜尋並複製 NDT PDF 檔案，避免複製「作廢」版本"""
     pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+).*?\.pdf', re.IGNORECASE)
     copied_files = 0
     not_found_codes = set(codes_with_filenames.keys())
 
-    target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
-    os.makedirs(target_folder_path, exist_ok=True)
+    # 建立一個字典來存放每個 NDT 編號對應的檔案
+    ndt_files = {}
 
+    # 遍歷來源資料夾，索引所有符合條件的檔案
     for root, dirs, files in os.walk(source_folder):
         for file in files:
             if file.endswith('.pdf') and not file.startswith('~$'):
@@ -171,16 +172,46 @@ def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames,
                 if match:
                     ndt_code = match.group(1)
                     if ndt_code in codes_with_filenames:
-                        not_found_codes.discard(ndt_code)
-                        source_file_path = os.path.join(root, file)
-                        source_file_path = rename_file_if_needed(source_file_path)
-                        target_file_path = os.path.join(target_folder_path, file)
-                        try:
-                            shutil.copy2(source_file_path, target_file_path)
-                            copied_files += 1
-                            print(f"已複製 NDT 檔案: {source_file_path} -> {target_file_path}")
-                        except Exception as e:
-                            print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
+                        file_path = os.path.join(root, file)
+                        # 判斷是否為「作廢」版本
+                        is_cancelled = "作廢" in file
+                        if ndt_code not in ndt_files:
+                            ndt_files[ndt_code] = {'valid': None, 'cancelled': None}
+                        if is_cancelled:
+                            ndt_files[ndt_code]['cancelled'] = file_path
+                        else:
+                            ndt_files[ndt_code]['valid'] = file_path
+
+    target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
+    os.makedirs(target_folder_path, exist_ok=True)
+
+    for ndt_code, files_dict in ndt_files.items():
+        if files_dict['valid']:
+            source_file_path = rename_file_if_needed(files_dict['valid'])
+            target_file_name = os.path.basename(source_file_path)
+            target_file_path = os.path.join(target_folder_path, target_file_name)
+            try:
+                shutil.copy2(source_file_path, target_file_path)
+                copied_files += 1
+                print(f"已複製 NDT 檔案: {source_file_path} -> {target_file_path}")
+                not_found_codes.discard(ndt_code)
+            except Exception as e:
+                print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
+        elif files_dict['cancelled']:
+            # 如果沒有有效版本但有作廢版本，可以選擇是否複製作廢版本
+            # 根據需求，這裡選擇不複製作廢版本
+            print(f"找到作廢的 NDT 檔案，但不複製: {files_dict['cancelled']}")
+            not_found_codes.discard(ndt_code)  # 視情況是否將其視為已處理
+            # 若需要複製作廢版本，可以取消以下註解
+            # source_file_path = rename_file_if_needed(files_dict['cancelled'])
+            # target_file_name = os.path.basename(source_file_path)
+            # target_file_path = os.path.join(target_folder_path, target_file_name)
+            # try:
+            #     shutil.copy2(source_file_path, target_file_path)
+            #     copied_files += 1
+            #     print(f"已複製作廢的 NDT 檔案: {source_file_path} -> {target_file_path}")
+            # except Exception as e:
+            #     print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
 
     # 構建未找到的檔案名稱列表
     not_found_filenames = {codes_with_filenames[code] for code in not_found_codes}
