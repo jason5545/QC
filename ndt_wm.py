@@ -191,41 +191,62 @@ def delete_all_ndt_pdfs(target_folder, is_as_built):
 
     return deleted_files
 
-def is_target_folder(folder_name):
-    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#')
-    return pattern.match(folder_name) is not None
-
 def extract_base_folder_name(folder_name):
-    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#|6S20[1256]#)')
-    match = pattern.search(folder_name)
+    """
+    提取資料夾名稱，統一處理 XB 系列和 6S 系列的命名格式
+    例如：
+    - XB4C.001#001
+    - 6S201.001#021
+    """
+    # 統一格式模式
+    patterns = [
+        r'(XB[1-4][ABC](?:\.\d{3})?#\d+)',  # XB 系列，流水號可選
+        r'(6S(?:20[1-6]|21[1-7])(?:\.\d{3})?#?\d*)'  # 6S 系列，流水號可選
+    ]
+    
+    combined_pattern = '|'.join(patterns)
+    match = re.search(combined_pattern, folder_name)
     if match:
         return match.group(1)
-    else:
-        return folder_name
+    return folder_name
+
+def is_target_folder(folder_name):
+    """
+    檢查是否為目標資料夾
+    """
+    patterns = [
+        r'XB[1-4][ABC](?:\.\d{3})?#\d+',
+        r'6S(?:20[1-6]|21[1-7])(?:\.\d{3})?#?\d*'
+    ]
+    
+    combined_pattern = '|'.join(patterns)
+    return re.match(combined_pattern, folder_name) is not None
 
 def clean_unmatched_files(pdf_folder, is_as_built):
     """
-    改進的檔案匹配邏輯，更準確地判斷檔案是否符合命名規則
+    改進的檔案匹配邏輯，統一處理流水號
     """
     deleted_files = []
     folder_name = os.path.basename(pdf_folder)
     base_folder_name = extract_base_folder_name(folder_name)
     
-    # 修改正則表達式以更寬鬆地匹配檔案名稱
-    # 允許檔案名稱中包含資料夾名稱的任何部分
+    # 建立檔案名稱匹配模式
     base_patterns = [
         re.escape(base_folder_name),  # 完全匹配
-        r'CWP\d+[A-Z]-' + re.escape(base_folder_name),  # 允許前綴
-        re.escape(base_folder_name) + r'[\s_-]?\d*',  # 允許後綴數字
+        r'CWP\d+[A-Z]-' + re.escape(base_folder_name),  # 允許 CWP 前綴
+        # 統一的匹配模式，處理基本名稱和可選的流水號
+        r'.*?' + re.escape(base_folder_name.split('.')[0]) + r'(?:\.\d{3})?(?:#\d+)?' + r'.*'
     ]
     
-    # 合併所有模式
     combined_pattern = '|'.join(f'({pattern})' for pattern in base_patterns)
     
     if is_as_built:
         target_folders = ["04 Welding Identification Summary", "03 Material Traceability & Mill Cert"]
     else:
         target_folders = ["01 Welding Identification Summary", "02 Material Traceability & Mill Cert"]
+
+    print(f"資料夾基本名稱: {base_folder_name}")
+    print(f"使用的匹配模式: {combined_pattern}")
 
     for subfolder in target_folders:
         subfolder_path = os.path.join(pdf_folder, subfolder)
@@ -234,16 +255,12 @@ def clean_unmatched_files(pdf_folder, is_as_built):
                 for file in files:
                     if file.endswith('.pdf') and not file.startswith('~$'):
                         file_path = os.path.join(root, file)
-                        
-                        # 檢查檔案名稱是否符合任一模式
                         file_name_without_extension = os.path.splitext(file)[0]
                         
-                        # 新增：在刪除之前輸出除錯資訊
                         print(f"檢查檔案: {file_name_without_extension}")
-                        print(f"比對模式: {combined_pattern}")
                         
+                        # 檢查檔案名稱是否符合模式
                         if not re.search(combined_pattern, file_name_without_extension, re.IGNORECASE):
-                            # 在刪除之前新增確認對話框
                             if messagebox.askyesno("確認刪除", 
                                                  f"是否要刪除檔案：{file}\n" +
                                                  f"資料夾名稱：{base_folder_name}\n" +
@@ -253,10 +270,9 @@ def clean_unmatched_files(pdf_folder, is_as_built):
                                 print(f"已刪除檔案: {file_path}")
                             else:
                                 print(f"使用者選擇保留檔案: {file_path}")
-                break  # 只處理當前資料夾，不遞迴進入子資料夾
-                
+                break
+    
     return deleted_files
-
 # 其餘函式保持不變，例如 `process_single_folder` 和 `process_folders` 等。
 # ...
 
