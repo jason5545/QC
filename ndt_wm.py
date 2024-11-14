@@ -13,6 +13,7 @@ class FileCache:
     def __init__(self, cache_file='file_cache.json'):
         self.cache_file = cache_file
         self.cache = {}
+        self.lock = threading.Lock()
         self.load_cache()
     
     def load_cache(self):
@@ -25,29 +26,32 @@ class FileCache:
                 self.cache = {}
     
     def save_cache(self):
-        try:
-            with open(self.cache_file, 'w', encoding='utf-8') as f:
-                json.dump(self.cache, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"無法儲存快取檔案 {self.cache_file}: {e}")
+        with self.lock:
+            try:
+                with open(self.cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.cache, f, ensure_ascii=False, indent=4)
+            except Exception as e:
+                print(f"無法儲存快取檔案 {self.cache_file}: {e}")
     
     def get_file_data(self, file_path):
-        if file_path in self.cache:
-            cached = self.cache[file_path]
-            try:
-                current_mtime = os.path.getmtime(file_path)
-                if cached['mtime'] == current_mtime:
-                    return cached['data']
-            except Exception as e:
-                print(f"無法獲取檔案修改時間 {file_path}: {e}")
-        return None
+        with self.lock:
+            if file_path in self.cache:
+                cached = self.cache[file_path]
+                try:
+                    current_mtime = os.path.getmtime(file_path)
+                    if cached['mtime'] == current_mtime:
+                        return cached['data']
+                except Exception as e:
+                    print(f"無法獲取檔案修改時間 {file_path}: {e}")
+            return None
     
     def update_file_data(self, file_path, data):
-        try:
-            mtime = os.path.getmtime(file_path)
-            self.cache[file_path] = {'mtime': mtime, 'data': data}
-        except Exception as e:
-            print(f"無法更新快取檔案 {file_path}: {e}")
+        with self.lock:
+            try:
+                mtime = os.path.getmtime(file_path)
+                self.cache[file_path] = {'mtime': mtime, 'data': data}
+            except Exception as e:
+                print(f"無法更新快取檔案 {file_path}: {e}")
 
 def rename_file_if_needed(file_path, cache):
     """檢查檔案名稱中是否包含 CWP06G-XB4C 並取代"""
@@ -220,22 +224,8 @@ def process_pdf_files_in_folder(folder, is_as_built, cache):
         pdf_files = [os.path.join(summary_folder, f) for f in os.listdir(summary_folder)
                      if f.endswith('.pdf') and not f.startswith('~$')]
 
+        # 使用 ThreadPoolExecutor 提取編號
         with ThreadPoolExecutor(max_workers=12) as executor:
-            # 重新命名檔案
-            rename_futures = {executor.submit(rename_file_if_needed, file_path, cache): file_path for file_path in pdf_files}
-            renamed_files = []
-            for future in as_completed(rename_futures):
-                file_path = rename_futures[future]
-                try:
-                    new_file_path = future.result()
-                    if new_file_path != file_path:
-                        renamed_files.append((file_path, new_file_path))
-                except Exception as e:
-                    print(f"錯誤重新命名檔案 {file_path}: {e}")
-
-            # 更新 pdf_files 列表
-            pdf_files = [new_path if new_path != old_path else old_path for old_path, new_path in renamed_files]
-
             # 提取 NDT 編號
             ndt_futures = {executor.submit(get_ndt_codes_from_pdf, file_path, cache): file_path for file_path in pdf_files}
             for future in as_completed(ndt_futures):
@@ -260,17 +250,6 @@ def process_pdf_files_in_folder(folder, is_as_built, cache):
 
     return ndt_codes_with_filenames_total, welding_codes_total
 
-def copy_file(source, target, code, not_found_codes, lock):
-    try:
-        shutil.copy2(source, target)
-        print(f"已複製 NDT 檔案: {source} -> {target}")
-        with lock:
-            not_found_codes.discard(code)
-        return True
-    except Exception as e:
-        print(f"無法複製檔案 {source} 到 {target}: {e}")
-        return False
-
 def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built, cache):
     """搜尋並複製 NDT PDF 檔案，避免複製「作廢」版本"""
     pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+).*?\.pdf', re.IGNORECASE)
@@ -282,16 +261,14 @@ def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames,
     ndt_lock = threading.Lock()
 
     # 索引檔案
-    def index_file(root, file):
-        if file.endswith('.pdf') and not file.startswith('~$'):
-            match = pattern.search(file)
+    def index_file(file_path):
+        if file_path.endswith('.pdf') and not file_path.startswith('~$'):
+            file_name = os.path.basename(file_path)
+            match = pattern.search(file_name)
             if match:
                 ndt_code = match.group(1)
-                file_path = os.path.join(root, file)
-                # 檢查快取並重新命名
-                file_path = rename_file_if_needed(file_path, cache)
                 # 判斷是否為「作廢」版本
-                is_cancelled = "作廢" in file
+                is_cancelled = "作廢" in file_name
                 with ndt_lock:
                     if ndt_code not in ndt_files:
                         ndt_files[ndt_code] = {'valid': None, 'cancelled': None}
@@ -300,12 +277,10 @@ def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames,
                     else:
                         ndt_files[ndt_code]['valid'] = file_path
 
+    # 使用多執行緒索引檔案
     with ThreadPoolExecutor(max_workers=12) as executor:
-        futures = []
-        for root, dirs, files in os.walk(source_folder):
-            for file in files:
-                futures.append(executor.submit(index_file, root, file))
-            break  # 只處理第一層子資料夾
+        futures = [executor.submit(index_file, os.path.join(root, file))
+                   for root, dirs, files in os.walk(source_folder) for file in files]
         for future in as_completed(futures):
             try:
                 future.result()
@@ -315,25 +290,35 @@ def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames,
     target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
     os.makedirs(target_folder_path, exist_ok=True)
 
-    # 複製檔案
-    with ThreadPoolExecutor(max_workers=12) as executor:
-        futures = []
-        for ndt_code, files_dict in ndt_files.items():
-            if ndt_code in not_found_codes:
-                if files_dict['valid']:
-                    source_file_path = files_dict['valid']
-                    target_file_name = os.path.basename(source_file_path)
-                    target_file_path = os.path.join(target_folder_path, target_file_name)
-                    futures.append(executor.submit(copy_file, source_file_path, target_file_path, ndt_code, not_found_codes, ndt_lock))
-                elif files_dict['cancelled']:
-                    # 根據需求，這裡選擇不複製作廢版本
-                    print(f"找到作廢的 NDT 檔案，但不複製: {files_dict['cancelled']}")
+    # 定義複製任務
+    def copy_ndt_file(ndt_code, files_dict):
+        nonlocal copied_files
+        if ndt_code in not_found_codes:
+            if files_dict['valid']:
+                source_file_path = files_dict['valid']
+                target_file_name = os.path.basename(source_file_path)
+                target_file_path = os.path.join(target_folder_path, target_file_name)
+                try:
+                    shutil.copy2(source_file_path, target_file_path)
+                    copied_files += 1
+                    print(f"已複製 NDT 檔案: {source_file_path} -> {target_file_path}")
                     with ndt_lock:
                         not_found_codes.discard(ndt_code)
+                except Exception as e:
+                    print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
+            elif files_dict['cancelled']:
+                # 根據需求，這裡選擇不複製作廢版本
+                print(f"找到作廢的 NDT 檔案，但不複製: {files_dict['cancelled']}")
+                with ndt_lock:
+                    not_found_codes.discard(ndt_code)
+
+    # 使用多執行緒複製檔案
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [executor.submit(copy_ndt_file, ndt_code, files_dict)
+                   for ndt_code, files_dict in ndt_files.items()]
         for future in as_completed(futures):
             try:
-                if future.result():
-                    copied_files += 1
+                future.result()
             except Exception as e:
                 print(f"錯誤複製檔案: {e}")
 
@@ -358,33 +343,31 @@ def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_buil
     welding_lock = threading.Lock()
 
     # 定義複製任務
-    def copy_welding_file(file, root):
-        if file.endswith('.pdf') and not file.startswith('~$'):
-            source_file_path = os.path.join(root, file)
-            source_file_path = rename_file_if_needed(source_file_path, cache)
+    def copy_welding_file(file_path):
+        nonlocal copied_files
+        if file_path.endswith('.pdf') and not os.path.basename(file_path).startswith('~$'):
+            file_name = os.path.basename(file_path)
             for code, pattern in patterns.items():
-                if pattern.search(file):
+                if pattern.search(file_name):
                     with welding_lock:
                         if code in not_found_codes:
-                            not_found_codes.discard(code)
-                            target_file_path = os.path.join(target_folder_path, file)
+                            target_file_path = os.path.join(target_folder_path, file_name)
                             try:
-                                shutil.copy2(source_file_path, target_file_path)
-                                print(f"已複製焊材材證檔案: {source_file_path} -> {target_file_path}")
-                                return 1
+                                shutil.copy2(file_path, target_file_path)
+                                copied_files += 1
+                                print(f"已複製焊材材證檔案: {file_path} -> {target_file_path}")
+                                not_found_codes.discard(code)
                             except Exception as e:
-                                print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
-                    break  # 一個檔案只會對應到一個 code
-        return 0
+                                print(f"無法複製檔案 {file_path} 到 {target_file_path}: {e}")
+                            break  # 一個檔案只會對應到一個 code
 
+    # 使用多執行緒複製檔案
     with ThreadPoolExecutor(max_workers=12) as executor:
-        futures = []
-        for root, dirs, files in os.walk(source_folder):
-            for file in files:
-                futures.append(executor.submit(copy_welding_file, file, root))
+        futures = [executor.submit(copy_welding_file, os.path.join(root, file))
+                   for root, dirs, files in os.walk(source_folder) for file in files]
         for future in as_completed(futures):
             try:
-                copied_files += future.result()
+                future.result()
             except Exception as e:
                 print(f"錯誤複製焊材材證檔案: {e}")
 
