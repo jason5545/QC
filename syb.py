@@ -80,16 +80,29 @@ class SignatureTool:
                 self.status_label.config(text="請輸入日期")
                 return None
 
-            # 開啟原始簽名圖片
-            img = Image.open("紹宇.jpg")
+            # 開啟原始簽名圖片並轉換為RGBA模式
+            img = Image.open("紹宇.jpg").convert('RGBA')
+            
+            # 將灰色背景轉換為透明
+            data = img.getdata()
+            new_data = []
+            # 設定閾值來決定哪些像素要變透明
+            threshold = 100  # 可以調整這個值來改變透明化的程度
+            
+            for item in data:
+                # 檢查像素是否接近灰色或白色
+                if item[0] > threshold and item[1] > threshold and item[2] > threshold:
+                    new_data.append((255, 255, 255, 0))  # 完全透明
+                else:
+                    new_data.append(item)  # 保持原來的顏色
+                    
+            img.putdata(new_data)
             
             # 設定文字和字體
             font = ImageFont.truetype("JasonHandwriting2-Regular.ttf", 100)
 
-            # 初始化繪圖對象
-            draw = ImageDraw.Draw(img)
-
             # 獲取文字尺寸
+            draw = ImageDraw.Draw(img)
             try:
                 text_bbox = draw.textbbox((0, 0), date_text, font=font)
                 text_width = text_bbox[2] - text_bbox[0]
@@ -97,22 +110,20 @@ class SignatureTool:
             except AttributeError:
                 text_width, text_height = draw.textsize(date_text, font=font)
 
-            # 創建新圖片
+            # 創建新的透明圖片
             padding = 20
             new_image_width = img.width + text_width + padding
             new_image_height = max(img.height, text_height)
-            new_img = Image.new('RGB', (new_image_width, new_image_height), color=(255, 255, 255))
-            new_img.paste(img, (0, 0))
+            new_img = Image.new('RGBA', (new_image_width, new_image_height), (255, 255, 255, 0))  # 完全透明背景
+            
+            # 貼上處理過的簽名圖片
+            new_img.paste(img, (0, 0), img)
 
-            # 在右側填充背景顏色 #d0d0d0
+            # 添加日期文字到透明背景上
             draw_new_img = ImageDraw.Draw(new_img)
-            right_area = (img.width, 0, new_image_width, new_image_height)
-            draw_new_img.rectangle(right_area, fill=(208, 208, 208))
-
-            # 添加日期文字
             text_y = (new_image_height - text_height) // 2
             text_position = (img.width + padding, text_y)
-            draw_new_img.text(text_position, date_text, font=font, fill=(0, 0, 0))
+            draw_new_img.text(text_position, date_text, font=font, fill=(0, 0, 0, 255))  # 黑色文字，完全不透明
 
             # 縮小整個圖片
             target_height = 50
@@ -122,7 +133,7 @@ class SignatureTool:
             resized_img = new_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
 
             temp_path = f"temp_signature_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            resized_img.save(temp_path)
+            resized_img.save(temp_path, format='PNG')  # 使用PNG格式以保持透明度
             return temp_path
 
         except Exception as e:
@@ -138,7 +149,7 @@ class SignatureTool:
             width = 40
             height = 15
             
-            can.drawImage(signature_path, x-width/2, y-height/2, width, height, preserveAspectRatio=True)
+            can.drawImage(signature_path, x-width/2, y-height/2, width, height, preserveAspectRatio=True, mask='auto')
             can.save()
             packet.seek(0)
             
