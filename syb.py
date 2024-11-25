@@ -532,16 +532,4 @@ class SignatureTool:
                     
                 self.window.after(0, lambda: self.status_label.config(text="所有文件處理完成"))
             except Exception as e:
-                self.window.after(0, lambda: self.status_label.config(text=f"處理過程中發生錯誤: {e}"))
-            finally:
-                self.window.after(0, lambda: self.process_button.config(state=tk.NORMAL))
-                self.processing = False
-
-        threading.Thread(target=process_thread, daemon=True).start()
-
-    def run(self):
-        self.window.mainloop()
-
-if __name__ == "__main__":
-    app = SignatureTool()
-    app.run()
+                self.window.after(0, lambda: se
