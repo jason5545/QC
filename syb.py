@@ -7,7 +7,10 @@ from reportlab.lib.pagesizes import A4
 import io
 import os
 import json
+import shutil
 from datetime import datetime
+import threading
+import time
 
 class SignatureTool:
     def __init__(self):
@@ -16,6 +19,8 @@ class SignatureTool:
         self.input_pdf_path = None
         self.positions = self.load_positions()
         self.setup_gui()
+        self.pending_files = []  # 儲存待處理的檔案資訊
+        self.start_file_check_thread()
 
     def load_positions(self):
         try:
@@ -55,6 +60,7 @@ class SignatureTool:
         self.process_button = tk.Button(
             process_frame, 
             text="處理PDF", 
+            
             command=self.process_single_pdf,
             state=tk.DISABLED
         )
@@ -65,6 +71,47 @@ class SignatureTool:
         status_frame.pack(fill=tk.X, padx=20)
         self.status_label = tk.Label(status_frame, text="", wraplength=350)
         self.status_label.pack(fill=tk.X)
+
+    def start_file_check_thread(self):
+        """啟動檔案檢查線程"""
+        self.file_check_thread = threading.Thread(target=self.check_pending_files, daemon=True)
+        self.file_check_thread.start()
+
+    def check_pending_files(self):
+        """定期檢查並處理待處理的檔案"""
+        while True:
+            current_time = time.time()
+            files_to_process = []
+            files_to_remove = []
+
+            # 檢查每個待處理的檔案
+            for file_info in self.pending_files:
+                if current_time - file_info['timestamp'] >= 1:  # 5秒後處理
+                    files_to_process.append(file_info)
+                    files_to_remove.append(file_info)
+
+            # 處理檔案
+            for file_info in files_to_process:
+                try:
+                    # 複製檔案
+                    shutil.copy2(file_info['temp_path'], file_info['original_path'])
+                    # 刪除臨時檔案
+                    os.remove(file_info['temp_path'])
+                    # 更新狀態
+                    self.window.after(0, lambda: self.status_label.config(
+                        text=f"檔案已成功更新: {os.path.basename(file_info['original_path'])}"
+                    ))
+                except Exception as e:
+                    self.window.after(0, lambda error=str(e): self.status_label.config(
+                        text=f"更新檔案時發生錯誤: {error}"
+                    ))
+
+            # 從待處理列表中移除已處理的檔案
+            for file_info in files_to_remove:
+                self.pending_files.remove(file_info)
+
+            # 休眠一段時間再檢查
+            time.sleep(5)
 
     def get_document_type(self, filename):
         if 'Welding' in filename:
@@ -140,8 +187,11 @@ class SignatureTool:
             self.status_label.config(text=f"創建簽名圖片時發生錯誤: {e}")
             return None
 
-    def add_signature_to_pdf(self, input_path, output_path, signature_path, x, y):
+    def add_signature_to_pdf(self, input_path, signature_path, x, y):
         try:
+            # 創建臨時檔案路徑，使用時間戳來確保唯一性
+            temp_output_path = f"{input_path}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.temp"
+            
             packet = io.BytesIO()
             can = canvas.Canvas(packet, pagesize=A4)
             
@@ -161,13 +211,28 @@ class SignatureTool:
             page.merge_page(new_pdf.pages[0])
             output.add_page(page)
             
-            with open(output_path, "wb") as outputStream:
+            # 寫入臨時檔案
+            with open(temp_output_path, "wb") as outputStream:
                 output.write(outputStream)
             
+            # 將檔案資訊加入待處理列表
+            self.pending_files.append({
+                'temp_path': temp_output_path,
+                'original_path': input_path,
+                'timestamp': time.time()
+            })
+            
+            self.status_label.config(text="檔案處理完成！將在1分鐘後自動更新原始檔案")
             return True
 
         except Exception as e:
             self.status_label.config(text=f"處理PDF時發生錯誤: {e}")
+            # 如果發生錯誤，嘗試清理臨時檔案
+            if os.path.exists(temp_output_path):
+                try:
+                    os.remove(temp_output_path)
+                except:
+                    pass
             return False
 
     def select_pdf(self):
@@ -189,12 +254,8 @@ class SignatureTool:
             if not signature_path:
                 return
 
-            output_dir = os.path.dirname(self.input_pdf_path)
-            filename = os.path.basename(self.input_pdf_path)
-            output_path = os.path.join(output_dir, f"signed_{filename}")
-
-            if self.add_signature_to_pdf(self.input_pdf_path, output_path, signature_path, x, y):
-                self.status_label.config(text=f"處理完成！\n儲存於: {output_path}")
+            if self.add_signature_to_pdf(self.input_pdf_path, signature_path, x, y):
+                self.status_label.config(text="檔案處理中，請等待1秒後自動更新...")
             
             os.remove(signature_path)
 
