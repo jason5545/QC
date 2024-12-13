@@ -5,32 +5,98 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import re
 from difflib import get_close_matches
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
-def rename_file_if_needed(file_path):
+class FileCache:
+    def __init__(self, cache_file='file_cache.json'):
+        self.cache_file = cache_file
+        self.cache = {}
+        self.lock = threading.Lock()
+        self.load_cache()
+    
+    def load_cache(self):
+        if os.path.exists(self.cache_file):
+            try:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    self.cache = json.load(f)
+            except Exception as e:
+                print(f"無法載入快取檔案 {self.cache_file}: {e}")
+                self.cache = {}
+    
+    def save_cache(self):
+        with self.lock:
+            try:
+                with open(self.cache_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.cache, f, ensure_ascii=False, indent=4)
+            except Exception as e:
+                print(f"無法儲存快取檔案 {self.cache_file}: {e}")
+    
+    def get_file_data(self, file_path):
+        with self.lock:
+            if file_path in self.cache:
+                cached = self.cache[file_path]
+                try:
+                    current_mtime = os.path.getmtime(file_path)
+                    if cached['mtime'] == current_mtime:
+                        return cached['data']
+                except Exception as e:
+                    print(f"無法獲取檔案修改時間 {file_path}: {e}")
+            return None
+    
+    def update_file_data(self, file_path, data):
+        with self.lock:
+            try:
+                mtime = os.path.getmtime(file_path)
+                self.cache[file_path] = {'mtime': mtime, 'data': data}
+            except Exception as e:
+                print(f"無法更新快取檔案 {file_path}: {e}")
+
+def rename_file_if_needed(file_path, cache):
     """檢查檔案名稱中是否包含 CWP06G-XB4C 並取代"""
+    # 檢查快取
+    cached_data = cache.get_file_data(file_path)
+    if cached_data and 'renamed_path' in cached_data:
+        new_file_path = cached_data['renamed_path']
+        if os.path.exists(new_file_path):
+            return new_file_path
     file_name = os.path.basename(file_path)
     if "CWP06G-XB4C" in file_name:
         new_file_name = file_name.replace("CWP06G-XB4C", "CWP06C-XB4C")
         new_file_path = os.path.join(os.path.dirname(file_path), new_file_name)
-        os.rename(file_path, new_file_path)
-        print(f"檔案已重新命名: {file_path} -> {new_file_path}")
-        return new_file_path
+        try:
+            os.rename(file_path, new_file_path)
+            print(f"檔案已重新命名: {file_path} -> {new_file_path}")
+            cache.update_file_data(file_path, {'renamed_path': new_file_path})
+            return new_file_path
+        except Exception as e:
+            print(f"無法重新命名檔案 {file_path}: {e}")
     return file_path
 
-def check_and_rename_files_in_folder(folder_path):
+def check_and_rename_files_in_folder(folder_path, cache):
     """遍歷資料夾中的所有檔案，並進行必要的重新命名"""
     renamed_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            file_path = os.path.join(root, file)
-            new_file_path = rename_file_if_needed(file_path)
-            if new_file_path != file_path:
-                renamed_files.append((file_path, new_file_path))
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        future_to_file = {executor.submit(rename_file_if_needed, os.path.join(root, file), cache): os.path.join(root, file)
+                          for root, dirs, files in os.walk(folder_path) for file in files}
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                new_file_path = future.result()
+                if new_file_path != file_path:
+                    renamed_files.append((file_path, new_file_path))
+            except Exception as e:
+                print(f"錯誤處理檔案 {file_path}: {e}")
     return renamed_files
 
-def get_ndt_codes_from_pdf(file_path):
+def get_ndt_codes_from_pdf(file_path, cache):
     """從 PDF 中提取 NDT 編號"""
-    codes_with_filenames = dict()
+    cached_data = cache.get_file_data(file_path)
+    if cached_data and 'ndt_codes' in cached_data:
+        return {code: f'CWP-Q-R-JK-NDT-{code}.pdf' for code in cached_data['ndt_codes']}
+    
+    codes_with_filenames = {}
     pattern = re.compile(r'CWPQRJKNDT(\d+)', re.IGNORECASE)
 
     try:
@@ -42,18 +108,25 @@ def get_ndt_codes_from_pdf(file_path):
 
         matches = pattern.findall(text)
         if matches:
-            codes_with_filenames.update({code: f'CWP-Q-R-JK-NDT-{code}.pdf' for code in matches})
+            codes_with_filenames = {code: f'CWP-Q-R-JK-NDT-{code}.pdf' for code in matches}
             print(f"從 {file_path} 提取到 NDT 編號: {matches}")
         else:
             print(f"從 {file_path} 未提取到任何 NDT 編號。")
+
+        # 更新快取
+        cache.update_file_data(file_path, {'ndt_codes': matches})
 
     except Exception as e:
         print(f"無法讀取 PDF 檔案 {file_path}: {e}")
 
     return codes_with_filenames
 
-def get_welding_codes_from_pdf(file_path):
+def get_welding_codes_from_pdf(file_path, cache):
     """從 PDF 中提取焊材材證編號"""
+    cached_data = cache.get_file_data(file_path)
+    if cached_data and 'welding_codes' in cached_data:
+        return set(cached_data['welding_codes'])
+    
     codes = set()
     pattern = re.compile(r'\b\d{6,10}\b')  # 匹配六位到十位數字
 
@@ -66,10 +139,13 @@ def get_welding_codes_from_pdf(file_path):
 
         matches = pattern.findall(text)
         if matches:
-            codes.update(matches)
+            codes = set(matches)
             print(f"從 {file_path} 提取到焊材材證編號: {matches}")
         else:
             print(f"從 {file_path} 未提取到任何焊材材證編號。")
+
+        # 更新快取
+        cache.update_file_data(file_path, {'welding_codes': list(codes)})
 
     except Exception as e:
         print(f"無法讀取 PDF 檔案 {file_path}: {e}")
@@ -79,25 +155,26 @@ def get_welding_codes_from_pdf(file_path):
 def is_target_folder(folder_name):
     """判斷是否為目標資料夾，並支援如 '6S201#021' 的格式"""
     # 修改正則表達式以捕捉更多數字位數
-    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[1256]#\d+', re.IGNORECASE)
+    pattern = re.compile(r'XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[12356]#\d+', re.IGNORECASE)
     return pattern.match(folder_name) is not None
 
 def extract_base_folder_name(folder_name):
     """從資料夾名稱中提取基本名稱，支援如 '6S201#021' 的格式"""
     # 修改正則表達式以捕捉更多數字位數
-    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[1256]#\d+)', re.IGNORECASE)
+    pattern = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[12356]#\d+)', re.IGNORECASE)
     match = pattern.search(folder_name)
     if match:
         return match.group(1)
     else:
         return folder_name
 
-def process_pdf_files_in_folder(folder, is_as_built):
+def process_pdf_files_in_folder(folder, is_as_built, cache):
     """處理指定資料夾中的 PDF 檔案，提取 NDT 和焊材材證編號"""
     ndt_codes_with_filenames_total = {}
     welding_codes_total = set()
     target_folder_name = "04 Welding Identification Summary" if is_as_built else "01 Welding Identification Summary"
 
+    # 找到目標資料夾，可能需要重新命名
     for root, dirs, files in os.walk(folder):
         if target_folder_name not in dirs:
             close_matches = get_close_matches(target_folder_name, dirs, n=1, cutoff=0.6)
@@ -142,20 +219,38 @@ def process_pdf_files_in_folder(folder, is_as_built):
 
         summary_folder = os.path.join(root, target_folder_name)
         print(f"處理資料夾: {summary_folder}")
-        for summary_file in os.listdir(summary_folder):
-            if summary_file.endswith('.pdf') and not summary_file.startswith('~$'):
-                summary_path = os.path.join(summary_folder, summary_file)
-                summary_path = rename_file_if_needed(summary_path)
 
-                ndt_codes_with_filenames = get_ndt_codes_from_pdf(summary_path)
-                welding_codes = get_welding_codes_from_pdf(summary_path)
-                ndt_codes_with_filenames_total.update(ndt_codes_with_filenames)
-                welding_codes_total.update(welding_codes)
+        # 獲取所有 PDF 檔案
+        pdf_files = [os.path.join(summary_folder, f) for f in os.listdir(summary_folder)
+                     if f.endswith('.pdf') and not f.startswith('~$')]
+
+        # 使用 ThreadPoolExecutor 提取編號
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            # 提取 NDT 編號
+            ndt_futures = {executor.submit(get_ndt_codes_from_pdf, file_path, cache): file_path for file_path in pdf_files}
+            for future in as_completed(ndt_futures):
+                file_path = ndt_futures[future]
+                try:
+                    ndt_codes = future.result()
+                    ndt_codes_with_filenames_total.update(ndt_codes)
+                except Exception as e:
+                    print(f"錯誤提取 NDT 編號從檔案 {file_path}: {e}")
+
+            # 提取焊材材證編號
+            welding_futures = {executor.submit(get_welding_codes_from_pdf, file_path, cache): file_path for file_path in pdf_files}
+            for future in as_completed(welding_futures):
+                file_path = welding_futures[future]
+                try:
+                    welding_codes = future.result()
+                    welding_codes_total.update(welding_codes)
+                except Exception as e:
+                    print(f"錯誤提取焊材材證編號從檔案 {file_path}: {e}")
+
         break  # 只處理第一層子資料夾
 
     return ndt_codes_with_filenames_total, welding_codes_total
 
-def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built):
+def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames, is_as_built, cache):
     """搜尋並複製 NDT PDF 檔案，避免複製「作廢」版本"""
     pattern = re.compile(r'CWP-Q-R-JK-NDT-(\d+).*?\.pdf', re.IGNORECASE)
     copied_files = 0
@@ -163,62 +258,76 @@ def search_and_copy_ndt_pdfs(source_folder, target_folder, codes_with_filenames,
 
     # 建立一個字典來存放每個 NDT 編號對應的檔案
     ndt_files = {}
+    ndt_lock = threading.Lock()
 
-    # 遍歷來源資料夾，索引所有符合條件的檔案
-    for root, dirs, files in os.walk(source_folder):
-        for file in files:
-            if file.endswith('.pdf') and not file.startswith('~$'):
-                match = pattern.search(file)
-                if match:
-                    ndt_code = match.group(1)
-                    if ndt_code in codes_with_filenames:
-                        file_path = os.path.join(root, file)
-                        # 判斷是否為「作廢」版本
-                        is_cancelled = "作廢" in file
-                        if ndt_code not in ndt_files:
-                            ndt_files[ndt_code] = {'valid': None, 'cancelled': None}
-                        if is_cancelled:
-                            ndt_files[ndt_code]['cancelled'] = file_path
-                        else:
-                            ndt_files[ndt_code]['valid'] = file_path
+    # 索引檔案
+    def index_file(file_path):
+        if file_path.endswith('.pdf') and not file_path.startswith('~$'):
+            file_name = os.path.basename(file_path)
+            match = pattern.search(file_name)
+            if match:
+                ndt_code = match.group(1)
+                # 判斷是否為「作廢」版本
+                is_cancelled = "作廢" in file_name
+                with ndt_lock:
+                    if ndt_code not in ndt_files:
+                        ndt_files[ndt_code] = {'valid': None, 'cancelled': None}
+                    if is_cancelled:
+                        ndt_files[ndt_code]['cancelled'] = file_path
+                    else:
+                        ndt_files[ndt_code]['valid'] = file_path
+
+    # 使用多執行緒索引檔案
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [executor.submit(index_file, os.path.join(root, file))
+                   for root, dirs, files in os.walk(source_folder) for file in files]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f"錯誤索引檔案: {e}")
 
     target_folder_path = os.path.join(target_folder, '06 NDT Reports' if is_as_built else '04 NDT Reports')
     os.makedirs(target_folder_path, exist_ok=True)
 
-    for ndt_code, files_dict in ndt_files.items():
-        if files_dict['valid']:
-            source_file_path = rename_file_if_needed(files_dict['valid'])
-            target_file_name = os.path.basename(source_file_path)
-            target_file_path = os.path.join(target_folder_path, target_file_name)
+    # 定義複製任務
+    def copy_ndt_file(ndt_code, files_dict):
+        nonlocal copied_files
+        if ndt_code in not_found_codes:
+            if files_dict['valid']:
+                source_file_path = files_dict['valid']
+                target_file_name = os.path.basename(source_file_path)
+                target_file_path = os.path.join(target_folder_path, target_file_name)
+                try:
+                    shutil.copy2(source_file_path, target_file_path)
+                    copied_files += 1
+                    print(f"已複製 NDT 檔案: {source_file_path} -> {target_file_path}")
+                    with ndt_lock:
+                        not_found_codes.discard(ndt_code)
+                except Exception as e:
+                    print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
+            elif files_dict['cancelled']:
+                # 根據需求，這裡選擇不複製作廢版本
+                print(f"找到作廢的 NDT 檔案，但不複製: {files_dict['cancelled']}")
+                with ndt_lock:
+                    not_found_codes.discard(ndt_code)
+
+    # 使用多執行緒複製檔案
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [executor.submit(copy_ndt_file, ndt_code, files_dict)
+                   for ndt_code, files_dict in ndt_files.items()]
+        for future in as_completed(futures):
             try:
-                shutil.copy2(source_file_path, target_file_path)
-                copied_files += 1
-                print(f"已複製 NDT 檔案: {source_file_path} -> {target_file_path}")
-                not_found_codes.discard(ndt_code)
+                future.result()
             except Exception as e:
-                print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
-        elif files_dict['cancelled']:
-            # 如果沒有有效版本但有作廢版本，可以選擇是否複製作廢版本
-            # 根據需求，這裡選擇不複製作廢版本
-            print(f"找到作廢的 NDT 檔案，但不複製: {files_dict['cancelled']}")
-            not_found_codes.discard(ndt_code)  # 視情況是否將其視為已處理
-            # 若需要複製作廢版本，可以取消以下註解
-            # source_file_path = rename_file_if_needed(files_dict['cancelled'])
-            # target_file_name = os.path.basename(source_file_path)
-            # target_file_path = os.path.join(target_folder_path, target_file_name)
-            # try:
-            #     shutil.copy2(source_file_path, target_file_path)
-            #     copied_files += 1
-            #     print(f"已複製作廢的 NDT 檔案: {source_file_path} -> {target_file_path}")
-            # except Exception as e:
-            #     print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
+                print(f"錯誤複製檔案: {e}")
 
     # 構建未找到的檔案名稱列表
     not_found_filenames = {codes_with_filenames[code] for code in not_found_codes}
 
     return copied_files, not_found_filenames
 
-def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_built):
+def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_built, cache):
     """搜尋並複製焊材材證 PDF 檔案"""
     copied_files = 0
     not_found_codes = set(codes)
@@ -231,24 +340,36 @@ def search_and_copy_welding_pdfs(source_folder, target_folder, codes, is_as_buil
     # 預先編譯所有需要的正則表達式
     patterns = {code: re.compile(re.escape(code), re.IGNORECASE) for code in codes}
 
-    for root, dirs, files in os.walk(source_folder):
-        for file in files:
-            if file.endswith('.pdf') and not file.startswith('~$'):
-                source_file_path = os.path.join(root, file)
-                source_file_path = rename_file_if_needed(source_file_path)
+    welding_lock = threading.Lock()
 
-                for code, pattern in patterns.items():
-                    if pattern.search(file):
+    # 定義複製任務
+    def copy_welding_file(file_path):
+        nonlocal copied_files
+        if file_path.endswith('.pdf') and not os.path.basename(file_path).startswith('~$'):
+            file_name = os.path.basename(file_path)
+            for code, pattern in patterns.items():
+                if pattern.search(file_name):
+                    with welding_lock:
                         if code in not_found_codes:
-                            not_found_codes.discard(code)
-                            target_file_path = os.path.join(target_folder_path, file)
+                            target_file_path = os.path.join(target_folder_path, file_name)
                             try:
-                                shutil.copy2(source_file_path, target_file_path)
+                                shutil.copy2(file_path, target_file_path)
                                 copied_files += 1
-                                print(f"已複製焊材材證檔案: {source_file_path} -> {target_file_path}")
+                                print(f"已複製焊材材證檔案: {file_path} -> {target_file_path}")
+                                not_found_codes.discard(code)
                             except Exception as e:
-                                print(f"無法複製檔案 {source_file_path} 到 {target_file_path}: {e}")
-                        break  # 一個檔案只會對應到一個 code
+                                print(f"無法複製檔案 {file_path} 到 {target_file_path}: {e}")
+                            break  # 一個檔案只會對應到一個 code
+
+    # 使用多執行緒複製檔案
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = [executor.submit(copy_welding_file, os.path.join(root, file))
+                   for root, dirs, files in os.walk(source_folder) for file in files]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f"錯誤複製焊材材證檔案: {e}")
 
     return copied_files, not_found_codes
 
@@ -364,10 +485,10 @@ def clean_unmatched_files(pdf_folder, is_as_built):
 
     return deleted_files
 
-def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built):
+def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built, cache):
     """處理單一資料夾中的所有操作"""
     # 先處理 NDT 報驗單和焊材材證編號
-    ndt_codes_with_filenames_total, welding_codes_total = process_pdf_files_in_folder(pdf_folder, is_as_built)
+    ndt_codes_with_filenames_total, welding_codes_total = process_pdf_files_in_folder(pdf_folder, is_as_built, cache)
 
     reasons = []
 
@@ -387,7 +508,7 @@ def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_
 
     # 開始複製 NDT 報驗單
     ndt_copied, not_found_ndt_filenames = search_and_copy_ndt_pdfs(
-        ndt_source_pdf_folder, pdf_folder, ndt_codes_with_filenames_total, is_as_built
+        ndt_source_pdf_folder, pdf_folder, ndt_codes_with_filenames_total, is_as_built, cache
     )
 
     if ndt_copied == 0 and ndt_codes_with_filenames_total:
@@ -395,7 +516,7 @@ def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_
 
     # 開始複製焊材材證
     welding_copied, not_found_welding_codes = search_and_copy_welding_pdfs(
-        welding_source_pdf_folder, pdf_folder, welding_codes_total, is_as_built
+        welding_source_pdf_folder, pdf_folder, welding_codes_total, is_as_built, cache
     )
 
     if welding_copied == 0 and welding_codes_total:
@@ -406,7 +527,7 @@ def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_
 
     return ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files
 
-def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder):
+def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, cache):
     """處理所有目標資料夾"""
     total_ndt_copied = 0
     total_welding_copied = 0
@@ -415,10 +536,10 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
     reasons_total = []
     deleted_files_total = []
 
-    is_as_built = "As-Built" in pdf_folder
+    is_as_built = "FOXWELL" in pdf_folder
 
     # 先檢查並重新命名檔案
-    renamed_files = check_and_rename_files_in_folder(pdf_folder)
+    renamed_files = check_and_rename_files_in_folder(pdf_folder, cache)
     if renamed_files:
         message = "以下檔案已被重新命名：\n"
         for old_path, new_path in renamed_files:
@@ -428,7 +549,7 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
     if is_target_folder(os.path.basename(pdf_folder)):
         # 如果根目錄就是目標資料夾
         ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = process_single_folder(
-            pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built
+            pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built, cache
         )
 
         total_ndt_copied += ndt_copied
@@ -444,7 +565,7 @@ def process_folders(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
                 if is_target_folder(dir):
                     subfolder_path = os.path.join(root, dir)
                     ndt_copied, welding_copied, not_found_ndt_filenames, not_found_welding_codes, reasons, deleted_files = process_single_folder(
-                        subfolder_path, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built
+                        subfolder_path, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built, cache
                     )
 
                     total_ndt_copied += ndt_copied
@@ -461,6 +582,9 @@ def main():
     """主函式"""
     root = tk.Tk()
     root.withdraw()
+
+    # 初始化快取
+    cache = FileCache()
 
     # 選擇包含銲道追溯檔案的資料夾
     pdf_initialdir = "C:/Users/CWP-PC-E-COM302/Box/T460 風電 品管 簡瑞成/FAT package"
@@ -504,12 +628,12 @@ def main():
         messagebox.showwarning("警告", "未選擇任何焊材材證資料夾，程序將終止。")
         return
 
-    is_as_built = "As-Built" in pdf_folder
+    is_as_built = "FOXWELL" in pdf_folder
     mode = "竣工模式" if is_as_built else "一般模式"
 
     # 處理資料夾
     total_ndt_copied, total_welding_copied, not_found_ndt_filenames_total, not_found_welding_codes_total, reasons_total, deleted_files_total = process_folders(
-        pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder
+        pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, cache
     )
 
     # 構建訊息內容
@@ -537,6 +661,9 @@ def main():
 
     # 顯示完成訊息
     messagebox.showinfo("完成", message)
+
+    # 儲存快取
+    cache.save_cache()
 
 if __name__ == "__main__":
     main()
