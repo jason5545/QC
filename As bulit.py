@@ -16,7 +16,7 @@ def rename_folders_and_remove_files(root_dir):
         "07 FAT report": "09 FAT reports (Incl. punch list)",
         "07 FAT reports": "09 FAT reports (Incl. punch list)",
         "Material certificates": "02 Material Traceability",
-        "Welding Comsumable": "05 Welding Consumable",
+        "Welding Consumable": "05 Welding Consumable",
         "04 NDT Reports": "06 NDT Reports"
     }
 
