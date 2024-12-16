@@ -14,7 +14,9 @@ def rename_folders_and_remove_files(root_dir):
         "05 Drawings": "01 Workshop Drawings",
         "05 Workshop Drawings": "01 Workshop Drawings",
         "07 FAT report": "09 FAT reports (Incl. punch list)",
+        "07 FAT reports": "09 FAT reports (Incl. punch list)",
         "Material certificates": "02 Material Traceability",
+        "Welding Comsumable": "05 Welding Consumable",
         "04 NDT Reports": "06 NDT Reports"
     }
 
@@ -29,120 +31,140 @@ def rename_folders_and_remove_files(root_dir):
         "09 FAT reports (Incl. punch list)"
     ]
 
-    # 調整後的目標資料夾名稱模式（正則表達式）
-    target_folder_pattern = re.compile(r'^(6S201#|6S202#|6S205#)\d*\s*(V)?$', re.IGNORECASE)
+    # 指定需要重命名檔案的資料夾
+    folders_to_rename_files = [
+        "02 Material Traceability",
+        "04 Welding Identification Summary"
+    ]
+
+    # 正則表達式模式
+    pattern = re.compile(r'(XB1#|XB[1-4][ABC]#|6S21[1-7]#|6S20[12356]#|XB3B\.002#|XB4B\.002#)\d+', re.IGNORECASE)
 
     def get_extension(filename):
-        """獲取檔案副檔名（小寫）"""
-        return os.path.splitext(filename)[1].lower()
+        """取得檔案副檔名"""
+        return os.path.splitext(filename)[1]
+
+    def fix_incorrect_04_files(root_dir):
+        """修復被錯誤重命名的 04 Welding Identification Summary 檔案"""
+        for root, dirs, files in os.walk(root_dir):
+            # 只處理 04 Welding Identification Summary 資料夾
+            if os.path.basename(root) == "04 Welding Identification Summary":
+                for filename in files:
+                    if "Welding Identification Summary_Welding Identification Summary" in filename:
+                        # 移除重複的部分
+                        new_name = filename.replace(
+                            "04 Welding Identification Summary_Welding Identification Summary_",
+                            "04 Welding Identification Summary_"
+                        )
+                        old_path = os.path.join(root, filename)
+                        new_path = os.path.join(root, new_name)
+                        try:
+                            os.rename(old_path, new_path)
+                            print(f"修復檔案名稱：\n從：{filename}\n到：{new_name}")
+                        except Exception as e:
+                            print(f"重命名檔案時發生錯誤：{e}")
+
+    def get_original_name(filename, folder):
+        """嘗試從錯誤命名的檔案中提取原始資訊，移除所有重複的前綴及不必要的字串"""
+        ext = get_extension(filename)
+        basename = filename[:-len(ext)] if ext else filename
+
+        if folder == "02 Material Traceability":
+            # 移除 "Material Identification " 或 "Material Traceability " 這類字串
+            basename = re.sub(r'^(?:Material Identification|Material Traceability)\s+', '', basename, flags=re.IGNORECASE)
+            # 移除所有 "02 Material Traceability_" 前綴
+            basename = re.sub(r'^(?:02 Material Traceability_)+', '', basename, flags=re.IGNORECASE)
+            # 移除所有 "Material Traceability_" 前綴
+            basename = re.sub(r'^(?:Material Traceability_)+', '', basename, flags=re.IGNORECASE)
+            # 移除前導底線
+            basename = re.sub(r'^_+', '', basename)
+            # 添加正確的前綴
+            return f"02 Material Traceability_{basename}"
+        
+        return basename
+
+    def rename_file(folder, original_filename):
+        """重新命名檔案（針對指定的資料夾）"""
+        if folder in folders_to_rename_files:
+            original_name = get_original_name(original_filename, folder)
+            ext = get_extension(original_filename)
+            new_filename = f"{original_name}{ext}"
+            return new_filename
+        return original_filename
 
     def is_filename_correct(folder, filename):
         """檢查檔案名稱是否符合預期格式"""
-        if folder == "07 Dimensional Reports":
-            return filename.startswith("Dimensional Reports_") and "CWP" in filename
-        elif folder in ["05 Welding Consumable", "06 NDT Reports", "09 FAT reports (Incl. punch list)"]:
-            return True  # 這些資料夾不需要特定前綴
-        elif folder == "02 Material Traceability":
-            return filename.startswith("02 Material Traceability_") and "CWP" in filename
-        elif folder == "04 Welding Identification Summary":
-            return filename.startswith("04 Welding Identification Summary_") and "CWP" in filename
-        else:
-            folder_prefix = folder.split()[0]
-            return filename.startswith(folder_prefix)
+        expected_prefix = f"{folder}_"
+        return filename.lower().startswith(expected_prefix.lower())
 
-    def get_original_name(filename):
-        """嘗試從錯誤命名的檔案中提取原始資訊"""
-        # 獲取副檔名
+    def restore_original_name(folder, filename):
+        """嘗試恢復被錯誤重命名的檔案名稱"""
         ext = get_extension(filename)
-        # 移除副檔名以處理主檔名
-        basename = os.path.splitext(filename)[0]
-        
-        # 移除所有可能的錯誤前綴
-        clean_name = re.sub(r'^\d{2}\s+\d{2}\s+', '', basename)
-        clean_name = re.sub(r'^\d{2}\s+', '', clean_name)
-        clean_name = re.sub(r'^Material Identification Summary_', '', clean_name)
-        clean_name = re.sub(r'^Material Traceability_', '', clean_name)
-        clean_name = re.sub(r'^Dimensional Reports_', '', clean_name)
-        clean_name = re.sub(r'^Welding Identification Summary_', '', clean_name)
-        
-        return clean_name, ext
+        basename = filename[:-len(ext)] if ext else filename
 
-    def rename_file(folder, filename):
-        # 如果檔案名稱已經正確，就不需要更改
-        if is_filename_correct(folder, filename):
-            return filename
+        # 檢查是否有資料夾名稱作為前綴，並移除
+        pattern_prefix = re.compile(r'^\d{2}\s+[A-Za-z\s]+_', re.IGNORECASE)
+        new_basename = pattern_prefix.sub('', basename)
 
-        # 取得資料夾的前綴編號和原始檔名資訊
-        folder_prefix = folder.split()[0]
-        original_name, ext = get_original_name(filename)
-        
-        # 根據不同資料夾類型重新命名
-        if folder == "07 Dimensional Reports":
-            if "CWP" in original_name:
-                return f"Dimensional Reports_{original_name}{ext}"
-            return filename  # 如果沒有 "CWP"，則保持原名
-                
-        elif folder in ["05 Welding Consumable", "06 NDT Reports", "09 FAT reports (Incl. punch list)"]:
-            return filename  # 不需要重新命名
-                
-        elif folder == "02 Material Traceability":
-            if "CWP" in original_name:
-                return f"{folder_prefix} Material Traceability_{original_name}{ext}"
-            return f"{folder_prefix} {original_name}{ext}"
-                
-        elif folder == "04 Welding Identification Summary":
-            if "CWP" in original_name:
-                return f"{folder_prefix} Welding Identification Summary_{original_name}{ext}"
-            return f"{folder_prefix} {original_name}{ext}"
-                
+        if new_basename != basename:
+            # 名稱被修改過，進行還原
+            original_name = new_basename + ext
+            return original_name
         else:
-            return f"{folder_prefix} {original_name}{ext}"
+            return filename  # 名稱未被修改，保持不變
 
-    def fix_previous_errors(folder_path):
+    def fix_previous_errors(folder_path, folder_name):
         """修復之前的命名錯誤"""
         if os.path.exists(folder_path):
             for filename in os.listdir(folder_path):
-                if filename.endswith('.pdf.pdf'):  # 修復重複的 .pdf
-                    new_name = filename[:-4]  # 移除一個 .pdf
-                    old_path = os.path.join(folder_path, filename)
-                    new_path = os.path.join(folder_path, new_name)
-                    try:
-                        os.rename(old_path, new_path)
-                        print(f"修正重複的.pdf：{old_path} -> {new_path}")
-                    except Exception as e:
-                        print(f"修正檔案時發生錯誤：{e}")
-                elif filename.endswith('.docx.pdf') or filename.endswith('.xlsx.pdf'):
-                    # 修復錯誤添加的 .pdf
-                    new_name = filename[:-4]
-                    old_path = os.path.join(folder_path, filename)
-                    new_path = os.path.join(folder_path, new_name)
-                    try:
-                        os.rename(old_path, new_path)
-                        print(f"移除錯誤添加的.pdf：{old_path} -> {new_path}")
-                    except Exception as e:
-                        print(f"修正檔案時發生錯誤：{e}")
+                if os.path.isfile(os.path.join(folder_path, filename)):
+                    if folder_name in folders_to_rename_files:
+                        new_filename = rename_file(folder_name, filename)
+                    else:
+                        new_filename = restore_original_name(folder_name, filename)
+
+                    if new_filename != filename:
+                        old_file_path = os.path.join(folder_path, filename)
+                        new_file_path = os.path.join(folder_path, new_filename)
+                        try:
+                            if not os.path.exists(new_file_path):
+                                os.rename(old_file_path, new_file_path)
+                                print(f"重命名檔案：{old_file_path} -> {new_file_path}")
+                            else:
+                                print(f"檔案已存在，無法重新命名：{new_file_path}")
+                        except Exception as e:
+                            print(f"重新命名檔案時發生錯誤：{e}")
 
     def process_directory(dir_path):
-        if not os.listdir(dir_path):
-            print(f"跳過空資料夾：{dir_path}")
+        """處理符合條件的資料夾"""
+        print(f"處理資料夾：{dir_path}")
+        if not os.path.exists(dir_path):
+            print(f"資料夾不存在：{dir_path}")
             return
 
         # 處理資料夾重新命名
-        for old_name in list(os.listdir(dir_path)):
+        for old_name in os.listdir(dir_path):
             old_path = os.path.join(dir_path, old_name)
             if os.path.isdir(old_path):
                 new_name = old_name
-                if old_name in rename_map:
-                    new_name = rename_map[old_name]
-                elif old_name in [folder.split(' ', 1)[1] for folder in required_folders]:
-                    prefix = [folder.split(' ', 1)[0] for folder in required_folders if folder.endswith(old_name)][0]
-                    new_name = f"{prefix} {old_name}"
+                lower_old_name = old_name.lower().replace(' ', '')
+                # 檢查重命名映射
+                for key in rename_map:
+                    key_normalized = key.lower().replace(' ', '')
+                    if lower_old_name == key_normalized:
+                        new_name = rename_map[key]
+                        break
                 if new_name != old_name:
                     new_path = os.path.join(dir_path, new_name)
                     try:
                         if not os.path.exists(new_path):
                             os.rename(old_path, new_path)
                             print(f"資料夾重新命名：{old_path} -> {new_path}")
+                        else:
+                            print(f"目標資料夾已存在，合併內容：{old_path} -> {new_path}")
+                            for item in os.listdir(old_path):
+                                shutil.move(os.path.join(old_path, item), new_path)
+                            os.rmdir(old_path)
                     except Exception as e:
                         print(f"重新命名資料夾時發生錯誤：{e}")
                     old_name = new_name
@@ -153,15 +175,21 @@ def rename_folders_and_remove_files(root_dir):
         new_punch_path = os.path.join(dir_path, "09 FAT reports (Incl. punch list)", "Punch list")
         if os.path.exists(old_punch_path):
             os.makedirs(os.path.dirname(new_punch_path), exist_ok=True)
-            shutil.move(old_punch_path, new_punch_path)
-            print(f"移動資料夾：{old_punch_path} -> {new_punch_path}")
+            try:
+                shutil.move(old_punch_path, new_punch_path)
+                print(f"移動資料夾：{old_punch_path} -> {new_punch_path}")
+            except Exception as e:
+                print(f"移動資料夾時發生錯誤：{e}")
 
         folders_to_remove = ["Archive", "06 NCR", "08 Punch list"]
         for folder in folders_to_remove:
             folder_path = os.path.join(dir_path, folder)
             if os.path.exists(folder_path):
-                shutil.rmtree(folder_path)
-                print(f"刪除資料夾：{folder_path}")
+                try:
+                    shutil.rmtree(folder_path)
+                    print(f"刪除資料夾：{folder_path}")
+                except Exception as e:
+                    print(f"刪除資料夾時發生錯誤：{e}")
 
         material_traceability_path = os.path.join(dir_path, "02 Material Traceability")
         if os.path.exists(material_traceability_path):
@@ -169,44 +197,50 @@ def rename_folders_and_remove_files(root_dir):
             if os.path.exists(welding_consumable_path):
                 new_welding_consumable_path = os.path.join(dir_path, "05 Welding Consumable")
                 if not os.path.exists(new_welding_consumable_path):
-                    shutil.move(welding_consumable_path, new_welding_consumable_path)
-                    print(f"移動並重新命名資料夾：{welding_consumable_path} -> {new_welding_consumable_path}")
+                    try:
+                        shutil.move(welding_consumable_path, new_welding_consumable_path)
+                        print(f"移動並重新命名資料夾：{welding_consumable_path} -> {new_welding_consumable_path}")
+                    except Exception as e:
+                        print(f"移動資料夾時發生錯誤：{e}")
+                else:
+                    # 如果目標資料夾已存在，則合併內容
+                    for item in os.listdir(welding_consumable_path):
+                        try:
+                            shutil.move(os.path.join(welding_consumable_path, item), new_welding_consumable_path)
+                        except Exception as e:
+                            print(f"移動檔案時發生錯誤：{e}")
+                    try:
+                        os.rmdir(welding_consumable_path)
+                        print(f"刪除資料夾：{welding_consumable_path}")
+                    except Exception as e:
+                        print(f"刪除資料夾時發生錯誤：{e}")
 
             material_certificates_folder = os.path.join(material_traceability_path, "Material certificates")
             if os.path.exists(material_certificates_folder):
-                shutil.rmtree(material_certificates_folder)
-                print(f"刪除資料夾：{material_certificates_folder}")
+                for item in os.listdir(material_certificates_folder):
+                    try:
+                        shutil.move(os.path.join(material_certificates_folder, item), material_traceability_path)
+                        print(f"移動檔案：{os.path.join(material_certificates_folder, item)} -> {material_traceability_path}")
+                    except Exception as e:
+                        print(f"移動檔案時發生錯誤：{e}")
+                try:
+                    os.rmdir(material_certificates_folder)
+                    print(f"刪除資料夾：{material_certificates_folder}")
+                except Exception as e:
+                    print(f"刪除資料夾時發生錯誤：{e}")
 
-        # 首先修復之前的命名錯誤
-        for folder in required_folders:
-            folder_path = os.path.join(dir_path, folder)
-            fix_previous_errors(folder_path)
-
-        # 然後處理檔案重新命名
+        # 修復之前的命名錯誤並處理檔案重命名
         for folder in required_folders:
             folder_path = os.path.join(dir_path, folder)
             if os.path.exists(folder_path):
-                for filename in os.listdir(folder_path):
-                    old_file_path = os.path.join(folder_path, filename)
-                    if os.path.isfile(old_file_path):
-                        # 檢查檔案名稱是否需要修正
-                        if not is_filename_correct(folder, filename):
-                            new_filename = rename_file(folder, filename)
-                            new_file_path = os.path.join(folder_path, new_filename)
-                            try:
-                                if os.path.exists(new_file_path):
-                                    print(f"檔案已存在，跳過重新命名：{old_file_path}")
-                                else:
-                                    os.rename(old_file_path, new_file_path)
-                                    print(f"修正檔案命名：{old_file_path} -> {new_file_path}")
-                            except Exception as e:
-                                print(f"重新命名檔案時發生錯誤：{e}")
+                print(f"正在處理資料夾：{folder_path}")
+                fix_previous_errors(folder_path, folder)
 
         # 刪除特定檔案
         for root, dirs, files in os.walk(dir_path):
             for file in files:
                 file_lower = file.lower()
-                if ((file_lower.endswith('.xlsx') and 'welding' in file_lower) or 
+                if ((file_lower.endswith('.xlsx') and 'welding' in file_lower) or
                     (file_lower.endswith('.docx') and 'material' in file_lower)):
                     file_path = os.path.join(root, file)
                     try:
@@ -215,18 +249,40 @@ def rename_folders_and_remove_files(root_dir):
                     except Exception as e:
                         print(f"刪除檔案時發生錯誤：{e}")
 
+        # 刪除空資料夾
+        for folder_name in os.listdir(dir_path):
+            folder_path = os.path.join(dir_path, folder_name)
+            if os.path.isdir(folder_path):
+                try:
+                    if not os.listdir(folder_path):
+                        os.rmdir(folder_path)
+                        print(f"刪除空資料夾：{folder_path}")
+                except Exception as e:
+                    print(f"檢查或刪除資料夾時發生錯誤：{e}")
+
     def find_and_process_target_folders(current_dir):
+        """遞迴查找並處理目標資料夾"""
+        if not os.path.exists(current_dir):
+            print(f"目錄不存在：{current_dir}")
+            return
         for entry in os.listdir(current_dir):
             dir_path = os.path.join(current_dir, entry)
             if os.path.isdir(dir_path):
-                if entry.startswith('XB') or target_folder_pattern.match(entry):
+                folder_name = os.path.basename(dir_path)
+                if pattern.search(folder_name):
+                    print(f"找到目標資料夾：{dir_path}")
                     process_directory(dir_path)
-                else:
-                    # 繼續在子目錄中查找
-                    find_and_process_target_folders(dir_path)
+                # 繼續在子目錄中查找
+                find_and_process_target_folders(dir_path)
 
     # 從根目錄開始搜索
+    print(f"開始處理根目錄：{root_dir}")
     find_and_process_target_folders(root_dir)
+
+    # 修復 04 Welding Identification Summary 資料夾中的檔案名稱
+    print("開始修復 04 Welding Identification Summary 資料夾中的檔案名稱。")
+    fix_incorrect_04_files(root_dir)
+    print("所有處理已完成。")
 
 def select_directory():
     root = tk.Tk()
