@@ -15,7 +15,7 @@ class FileCache:
         self.cache = {}
         self.lock = threading.Lock()
         self.load_cache()
-    
+
     def load_cache(self):
         if os.path.exists(self.cache_file):
             try:
@@ -24,7 +24,7 @@ class FileCache:
             except Exception as e:
                 print(f"無法載入快取檔案 {self.cache_file}: {e}")
                 self.cache = {}
-    
+
     def save_cache(self):
         with self.lock:
             try:
@@ -32,7 +32,7 @@ class FileCache:
                     json.dump(self.cache, f, ensure_ascii=False, indent=4)
             except Exception as e:
                 print(f"無法儲存快取檔案 {self.cache_file}: {e}")
-    
+
     def get_file_data(self, file_path):
         with self.lock:
             if file_path in self.cache:
@@ -44,7 +44,7 @@ class FileCache:
                 except Exception as e:
                     print(f"無法獲取檔案修改時間 {file_path}: {e}")
             return None
-    
+
     def update_file_data(self, file_path, data):
         with self.lock:
             try:
@@ -95,7 +95,7 @@ def get_ndt_codes_from_pdf(file_path, cache):
     cached_data = cache.get_file_data(file_path)
     if cached_data and 'ndt_codes' in cached_data:
         return {code: f'CWP-Q-R-JK-NDT-{code}.pdf' for code in cached_data['ndt_codes']}
-    
+
     codes_with_filenames = {}
     pattern = re.compile(r'CWPQRJKNDT(\d+)', re.IGNORECASE)
 
@@ -126,7 +126,7 @@ def get_welding_codes_from_pdf(file_path, cache):
     cached_data = cache.get_file_data(file_path)
     if cached_data and 'welding_codes' in cached_data:
         return set(cached_data['welding_codes'])
-    
+
     codes = set()
     pattern = re.compile(r'\b\d{6,10}\b')  # 匹配六位到十位數字
 
@@ -428,14 +428,18 @@ def clean_unmatched_files(pdf_folder, is_as_built):
 
         # 建立更精確的檔案名稱匹配模式
         base_name_without_number = re.sub(r'#\d+$', '', base_folder_name)
+        # 提取資料夾編號
+        folder_number_match = re.search(r'#(\d+)$', base_folder_name)
+        folder_number = folder_number_match.group(1) if folder_number_match else r'\d+' # 如果沒有編號則匹配任意數字
+
         base_patterns = [
             re.escape(base_folder_name),  # 完全匹配
             r'CWP\d+[A-Z]-' + re.escape(base_folder_name),  # 允許 CWP 前綴
-            # 更精確的匹配模式，考慮檔名中的 .001
-            (r'.*?' + 
+            # 更精確的匹配模式，確保編號一致
+            (r'.*?' +
              re.escape(base_name_without_number.split('.')[0]) +  # 取基本名稱（不含流水號）
              r'(?:\.\d{3})?' +  # 可選的第一個流水號（資料夾名稱中的）
-             r'#\d{3}' + 
+             f'#{folder_number}' + # 使用提取出的資料夾編號
              r'(?:\.\d{3})?' +  # 可選的第二個流水號（檔名中的）
              r'.*')
         ]
@@ -465,7 +469,7 @@ def clean_unmatched_files(pdf_folder, is_as_built):
                             try:
                                 if not combined_regex.search(file_name_without_extension):
                                     response = messagebox.askyesno(
-                                        "確認刪除", 
+                                        "確認刪除",
                                         f"是否要刪除檔案：{file}\n"
                                         f"資料夾名稱：{base_folder_name}\n"
                                         "此檔案似乎不符合命名規則。"
@@ -614,7 +618,7 @@ def main():
         messagebox.showwarning("警告", "未選擇任何報驗單資料夾，程序將終止。")
         return
 
-    # 選擇包含焊材材證 PDF 檔案的資料夾
+        # 選擇包含焊材材證 PDF 檔案的資料夾
     welding_source_pdf_initialdir = "U:/N-品管部/@品管部共用資料區/品管人員資料夾/T460 風電 品管 簡瑞成/焊材材證"
     if not os.path.exists(welding_source_pdf_initialdir):
         welding_source_pdf_initialdir = os.path.expanduser("~")
