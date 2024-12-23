@@ -42,7 +42,7 @@ class FileCache:
                     if cached['mtime'] == current_mtime:
                         return cached['data']
                 except Exception as e:
-                    print(f"無法獲取檔案修改時間 {file_path}: {e}")
+                    print(f"無法取得檔案修改時間 {file_path}: {e}")
             return None
 
     def update_file_data(self, file_path, data):
@@ -468,18 +468,9 @@ def clean_unmatched_files(pdf_folder, is_as_built):
 
                             try:
                                 if not combined_regex.search(file_name_without_extension):
-                                    response = messagebox.askyesno(
-                                        "確認刪除",
-                                        f"是否要刪除檔案：{file}\n"
-                                        f"資料夾名稱：{base_folder_name}\n"
-                                        "此檔案似乎不符合命名規則。"
-                                    )
-                                    if response:
-                                        os.remove(file_path)
-                                        deleted_files.append(file_path)
-                                        print(f"已刪除檔案: {file_path}")
-                                    else:
-                                        print(f"使用者選擇保留檔案: {file_path}")
+                                    os.remove(file_path)
+                                    deleted_files.append(file_path)
+                                    print(f"已刪除檔案: {file_path}")
                             except Exception as e:
                                 print(f"處理檔案時發生錯誤 {file_path}: {str(e)}")
                     break  # 只處理第一層子資料夾
@@ -618,7 +609,7 @@ def main():
         messagebox.showwarning("警告", "未選擇任何報驗單資料夾，程序將終止。")
         return
 
-        # 選擇包含焊材材證 PDF 檔案的資料夾
+    # 選擇包含焊材材證 PDF 檔案的資料夾
     welding_source_pdf_initialdir = "U:/N-品管部/@品管部共用資料區/品管人員資料夾/T460 風電 品管 簡瑞成/焊材材證"
     if not os.path.exists(welding_source_pdf_initialdir):
         welding_source_pdf_initialdir = os.path.expanduser("~")
