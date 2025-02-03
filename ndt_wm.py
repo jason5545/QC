@@ -21,7 +21,8 @@ NDT_REPORTS_FOLDER_AS_BUILT = '06 NDT Reports'
 NDT_REPORTS_FOLDER_GENERAL = '04 NDT Reports'
 WELDING_CONSUMABLE_FOLDER_AS_BUILT = '05 Welding Consumable'
 WELDING_CONSUMABLE_FOLDER_GENERAL = os.path.join('02 Material Traceability & Mill Cert', 'Welding Consumable')
-MATERIAL_TRACEABILITY_FOLDER_AS_BUILT = "03 Material Traceability & Mill Cert"
+# 修改部分：竣工模式下的物料追溯應為 "02 Material Traceability"
+MATERIAL_TRACEABILITY_FOLDER_AS_BUILT = "02 Material Traceability"
 MATERIAL_TRACEABILITY_FOLDER_GENERAL = "02 Material Traceability & Mill Cert"
 
 # 編譯常用的正則表達式，避免重複編譯
@@ -33,7 +34,7 @@ RE_BASE_FOLDER_NAME = re.compile(r'(XB1#\d+|XB[1-4][ABC]#\d+|6S21[1-7]#\d+|6S20[
 
 class FileCache:
     """檔案快取類別，用於儲存檔案的修改時間和資料。"""
-    def __init__(self, cache_file=CACHE_FILE):  # 使用常數
+    def __init__(self, cache_file=CACHE_FILE):
         self.cache_file = cache_file
         self.cache = {}
         self.lock = threading.Lock()
@@ -417,39 +418,40 @@ def clean_unmatched_files(pdf_folder, is_as_built):
         messagebox.showerror("錯誤", f"處理資料夾時發生錯誤：\n{str(e)}")
     return deleted_files
 
-# 新增的檢查函數：檢查目標資料夾底下是否存在 PDF 檔案  
+# 新增檢查函數：檢查目標資料夾底下是否存在 PDF 檔案
 def check_required_pdf_files(pdf_folder, is_as_built):
     """
     檢查每個目標資料夾下的指定子資料夾是否存在 PDF 檔案。
     一般模式下，檢查「01 Welding Identification Summary」與「02 Material Traceability & Mill Cert」；
-    竣工模式下，檢查「04 Welding Identification Summary」與「02 Material Traceability & Mill Cert」。
-    對於「02」的資料夾僅檢查該層，不包含子資料夾。
+    竣工模式下，檢查「04 Welding Identification Summary」與「02 Material Traceability」。
+    對於物料追溯的資料夾僅檢查該層，不包含子資料夾。
     Returns:
-        list: 缺少 PDF 檔案的資料夾路徑列表。
+        tuple: (缺少銲道追溯PDF的資料夾列表, 缺少物料追溯清單 PDF的資料夾列表)
     """
-    missing_folders = []
-    summary_folder_name = SUMMARY_FOLDER_NAME_AS_BUILT if is_as_built else SUMMARY_FOLDER_NAME_GENERAL
-    # 根據使用者要求，無論模式如何，Material Traceability 使用 02 的版本
-    traceability_folder_name = MATERIAL_TRACEABILITY_FOLDER_GENERAL
+    missing_welding_identification = []
+    missing_material_traceability = []
+    welding_folder_name = SUMMARY_FOLDER_NAME_AS_BUILT if is_as_built else SUMMARY_FOLDER_NAME_GENERAL
+    # 依據模式選擇物料追溯資料夾名稱
+    traceability_folder_name = MATERIAL_TRACEABILITY_FOLDER_AS_BUILT if is_as_built else MATERIAL_TRACEABILITY_FOLDER_GENERAL
 
     def check_in_target_folder(target_folder):
-        summary_path = os.path.join(target_folder, summary_folder_name)
+        welding_path = os.path.join(target_folder, welding_folder_name)
         traceability_path = os.path.join(target_folder, traceability_folder_name)
 
-        # 檢查 summary 資料夾（遞迴搜尋）
-        summary_has_pdf = False
-        if os.path.exists(summary_path) and os.path.isdir(summary_path):
-            for root, dirs, files in os.walk(summary_path):
+        # 檢查 Welding Identification (銲道追溯) 資料夾（遞迴搜尋）
+        welding_has_pdf = False
+        if os.path.exists(welding_path) and os.path.isdir(welding_path):
+            for root, dirs, files in os.walk(welding_path):
                 for file in files:
                     if file.endswith('.pdf') and not file.startswith('~$'):
-                        summary_has_pdf = True
+                        welding_has_pdf = True
                         break
-                if summary_has_pdf:
+                if welding_has_pdf:
                     break
-        if not summary_has_pdf:
-            missing_folders.append(summary_path)
+        if not welding_has_pdf:
+            missing_welding_identification.append(welding_path)
 
-        # 檢查 traceability 資料夾（僅檢查該層，不遞迴）
+        # 檢查 Material Traceability (物料追溯清單) 資料夾（僅檢查該層，不遞迴）
         traceability_has_pdf = False
         if os.path.exists(traceability_path) and os.path.isdir(traceability_path):
             for file in os.listdir(traceability_path):
@@ -457,9 +459,8 @@ def check_required_pdf_files(pdf_folder, is_as_built):
                     traceability_has_pdf = True
                     break
         if not traceability_has_pdf:
-            missing_folders.append(traceability_path)
+            missing_material_traceability.append(traceability_path)
 
-    # 若使用者選擇的根資料夾本身為目標資料夾，則檢查其內的子資料夾；否則檢查第一層的每個目標資料夾
     if is_target_folder(os.path.basename(pdf_folder)):
         check_in_target_folder(pdf_folder)
     else:
@@ -467,7 +468,7 @@ def check_required_pdf_files(pdf_folder, is_as_built):
             sub_path = os.path.join(pdf_folder, name)
             if os.path.isdir(sub_path) and is_target_folder(name):
                 check_in_target_folder(sub_path)
-    return missing_folders
+    return missing_welding_identification, missing_material_traceability
 
 # 單一資料夾處理函數
 def process_single_folder(pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, is_as_built, cache):
@@ -593,10 +594,14 @@ def main():
         pdf_folder, ndt_source_pdf_folder, welding_source_pdf_folder, cache
     )
 
-    # 新增檢查：確認每個目標資料夾下的 Summary 與 Material Traceability 資料夾是否存在 PDF 檔案
-    missing_pdf_folders = check_required_pdf_files(pdf_folder, is_as_built)
-    if missing_pdf_folders:
-        warning_message = "以下資料夾未發現 PDF 檔案：\n" + "\n".join(missing_pdf_folders)
+    # 檢查每個目標資料夾下的 Welding Identification 與 Material Traceability 資料夾是否存在 PDF 檔案
+    missing_welding_identification, missing_material_traceability = check_required_pdf_files(pdf_folder, is_as_built)
+    warning_message = ""
+    if missing_welding_identification:
+        warning_message += "缺少銲道追溯清單 PDF:\n" + "\n".join(missing_welding_identification) + "\n\n"
+    if missing_material_traceability:
+        warning_message += "缺少物料追溯清單 PDF:\n" + "\n".join(missing_material_traceability)
+    if warning_message:
         messagebox.showwarning("警告", warning_message)
 
     message = f"執行模式: {mode}\n\n"
