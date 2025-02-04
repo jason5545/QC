@@ -18,13 +18,14 @@ class SignatureTool:
         self.window = tk.Tk()
         self.window.title("PDF簽名工具")
         self.selected_folder = None
+        self.selected_file = None  # 新增處理單個檔案的變數
         self.setup_gui()
         self.pending_files = []
         self.start_file_check_thread()
         self.signature_path = None
 
     def setup_gui(self):
-        self.window.geometry("400x300")
+        self.window.geometry("400x450")
         
         # 日期輸入框
         date_frame = tk.Frame(self.window, pady=10)
@@ -48,7 +49,7 @@ class SignatureTool:
         self.folder_label = tk.Label(folder_frame, text="未選擇資料夾", wraplength=350)
         self.folder_label.pack(fill=tk.X, pady=(5, 0))
 
-        # 處理按鈕
+        # 處理資料夾按鈕
         process_frame = tk.Frame(self.window, pady=10)
         process_frame.pack(fill=tk.X, padx=20)
         self.process_button = tk.Button(
@@ -58,6 +59,28 @@ class SignatureTool:
             state=tk.DISABLED
         )
         self.process_button.pack(fill=tk.X)
+
+        # 分隔線
+        separator = tk.Frame(self.window, height=2, bd=1, relief=tk.SUNKEN)
+        separator.pack(fill=tk.X, padx=5, pady=5)
+
+        # 單個檔案處理區塊
+        file_frame = tk.Frame(self.window, pady=10)
+        file_frame.pack(fill=tk.X, padx=20)
+        self.select_file_button = tk.Button(file_frame, text="選擇單個PDF檔案", command=self.select_file)
+        self.select_file_button.pack(fill=tk.X)
+        self.file_label = tk.Label(file_frame, text="未選擇檔案", wraplength=350)
+        self.file_label.pack(fill=tk.X, pady=(5, 0))
+
+        file_process_frame = tk.Frame(self.window, pady=10)
+        file_process_frame.pack(fill=tk.X, padx=20)
+        self.process_file_button = tk.Button(
+            file_process_frame, 
+            text="開始處理單個檔案", 
+            command=self.process_file,
+            state=tk.DISABLED
+        )
+        self.process_file_button.pack(fill=tk.X)
 
         # 狀態顯示
         status_frame = tk.Frame(self.window, pady=10)
@@ -76,6 +99,19 @@ class SignatureTool:
         else:
             self.folder_label.config(text="未選擇資料夾")
             self.process_button.config(state=tk.DISABLED)
+
+    def select_file(self):
+        self.selected_file = filedialog.askopenfilename(
+            title="選擇PDF檔案",
+            filetypes=[("PDF files", "*.pdf")]
+        )
+        if self.selected_file:
+            self.file_label.config(text=self.selected_file)
+            self.process_file_button.config(state=tk.NORMAL)
+            self.status_label.config(text="已選擇檔案，請點擊開始處理單個檔案按鈕進行處理")
+        else:
+            self.file_label.config(text="未選擇檔案")
+            self.process_file_button.config(state=tk.DISABLED)
 
     def start_file_check_thread(self):
         self.file_check_thread = threading.Thread(target=self.check_pending_files, daemon=True)
@@ -289,6 +325,31 @@ class SignatureTool:
                                     self.status_label.config(text="簽名圖像生成失敗，跳過此文件")
 
         self.status_label.config(text="處理完畢，請查看資料夾中的PDF文件")
+
+    def process_file(self):
+        if not self.selected_file:
+            self.status_label.config(text="請先選擇檔案")
+            return
+
+        signature_path = self.create_signature_image()
+        if signature_path:
+            # 根據檔案路徑判斷是否屬於特定子資料夾，以使用對應的偏移值
+            offset_y = 0
+            offset_x = 0
+            if "04 Welding Identification Summary" in self.selected_file:
+                offset_y = -10
+                offset_x = 50
+            elif "02 Material Traceability" in self.selected_file:
+                offset_y = 3
+                offset_x = 0
+
+            if self.add_signature_to_pdf(self.selected_file, signature_path, offset_y, offset_x):
+                self.status_label.config(text=f"檔案已成功更新: {os.path.basename(self.selected_file)}")
+            else:
+                self.status_label.config(text=f"處理檔案失敗: {os.path.basename(self.selected_file)}")
+            os.remove(signature_path)
+        else:
+            self.status_label.config(text="簽名圖像生成失敗，跳過此文件")
 
     def run(self):
         self.window.mainloop()
